@@ -44,6 +44,13 @@ export interface SLAThresholds {
   resolution: number; // in hours
 }
 
+export interface EmployeeShift {
+  name: string;
+  shiftStart: string;
+  shiftEnd: string;
+  workingDays: string[];
+}
+
 export interface ProjectConfig {
   projectId: string;
   employees: string[];
@@ -54,4 +61,5 @@ export interface ProjectConfig {
   shiftEnd: string;
   workingDays: string[];
   holidays: string[];
+  employeeShifts: EmployeeShift[];
 }

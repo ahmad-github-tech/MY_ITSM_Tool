@@ -80,13 +80,18 @@ export default function App() {
     }
   };
 
-  const getBusinessMinutes = (startStr: string, endStr: string, config: ProjectConfig) => {
+  const getBusinessMinutes = (startStr: string, endStr: string, shiftConfig: {
+    shiftStart: string,
+    shiftEnd: string,
+    workingDays: string[],
+    holidays: string[]
+  }) => {
     const start = parseISO(startStr);
     const end = parseISO(endStr);
     if (start > end) return 0;
 
-    const [sH, sM] = config.shiftStart.split(':').map(Number);
-    const [eH, eM] = config.shiftEnd.split(':').map(Number);
+    const [sH, sM] = shiftConfig.shiftStart.split(':').map(Number);
+    const [eH, eM] = shiftConfig.shiftEnd.split(':').map(Number);
     const shiftStartMinutes = sH * 60 + sM;
     const shiftEndMinutes = eH * 60 + eM;
 
@@ -98,7 +103,7 @@ export default function App() {
       const dayName = format(current, 'EEE'); 
       const dateStr = format(current, 'yyyy-MM-dd');
 
-      if (config.workingDays.includes(dayName) && !config.holidays.includes(dateStr)) {
+      if (shiftConfig.workingDays.includes(dayName) && !shiftConfig.holidays.includes(dateStr)) {
         let dayEffStart = shiftStartMinutes;
         let dayEffEnd = shiftEndMinutes;
 
@@ -118,6 +123,18 @@ export default function App() {
     return totalMinutes;
   };
 
+  const getEffectiveShift = (projectId: string, assignedTo: string) => {
+    const config = projectConfigs.find(c => c.projectId === projectId);
+    const empShift = config?.employeeShifts.find(s => s.name === assignedTo);
+    
+    return {
+      shiftStart: empShift?.shiftStart || config?.shiftStart || '09:00',
+      shiftEnd: empShift?.shiftEnd || config?.shiftEnd || '18:00',
+      workingDays: empShift?.workingDays || config?.workingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      holidays: config?.holidays || []
+    };
+  };
+
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details'>('analytics');
   const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
   
@@ -126,6 +143,15 @@ export default function App() {
   const [tempShiftEnd, setTempShiftEnd] = useState('18:00');
   const [tempWorkingDays, setTempWorkingDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
   const [tempHolidays, setTempHolidays] = useState<string>('');
+  
+  const [tempEmployeeShifts, setTempEmployeeShifts] = useState<ProjectConfig['employeeShifts']>([]);
+  const [editingEmployeeShiftName, setEditingEmployeeShiftName] = useState<string | null>(null);
+  const [empShiftData, setEmpShiftData] = useState({
+    name: '',
+    shiftStart: '09:00',
+    shiftEnd: '18:00',
+    workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  });
 
   const handleAddProject = async () => {
     if (!newProjectInput.trim() || projectsDB.find(p => p.name === newProjectInput)) return;
@@ -207,7 +233,7 @@ export default function App() {
     }
 
     askConfirmation(
-      'Apply System Configuration Strategy',
+      'Apply Project Shift Allocation Strategy',
       `Updated service level benchmarks and shift parameters will be applied to project "${configSelectedProject}". System calculations will adapt immediately. Confirm?`,
       async () => {
         const payload = {
@@ -224,6 +250,7 @@ export default function App() {
           shiftEnd: tempShiftEnd,
           workingDays: tempWorkingDays.join(','),
           holidays: tempHolidays.split(',').map(h => h.trim()).filter(Boolean).join(','),
+          employeeShifts: JSON.stringify(tempEmployeeShifts),
         };
 
         try {
@@ -331,8 +358,34 @@ export default function App() {
   
   // Dynamic Projects List
   const PROJECTS_LIST = useMemo(() => projectsDB.map(p => p.name), [projectsDB]);
-  const [currentUser] = useState('Admin'); // Fallback to Admin from USERS if still hardcoded
+  const [currentUser] = useState('Admin'); // User can change this to test different roles
+  const isAdmin = currentUser === 'Admin';
   
+  const [projectConfigs, setProjectConfigs] = useState<ProjectConfig[]>([]);
+
+  // Derived user project mapping
+  const userMappedProjects = useMemo(() => {
+    if (isAdmin) return PROJECTS_LIST;
+    return projectConfigs
+      .filter(p => (p.employees || []).includes(currentUser))
+      .map(p => p.projectId);
+  }, [projectConfigs, currentUser, isAdmin, PROJECTS_LIST]);
+
+  // Auto-adjust filters for non-admin users
+  useEffect(() => {
+    if (!isAdmin && userMappedProjects.length > 0) {
+      if (selectedProject === 'All' || !userMappedProjects.includes(selectedProject)) {
+        setSelectedProject(userMappedProjects[0]);
+      }
+      if (selectedEmployee === 'All') {
+        // Technically "All" is restricted to Admin in the UI selection, 
+        // but we can allow "All" internally for the project view if wanted.
+        // However, following the prompt strictly:
+        setSelectedEmployee(currentUser);
+      }
+    }
+  }, [isAdmin, userMappedProjects, currentUser, selectedProject, selectedEmployee]);
+
   const [configSelectedProject, setConfigSelectedProject] = useState<string>('');
 
   // Sync configSelectedProject when projects load
@@ -340,9 +393,7 @@ export default function App() {
     if (PROJECTS_LIST.length > 0 && !configSelectedProject) {
       setConfigSelectedProject(PROJECTS_LIST[0]);
     }
-  }, [PROJECTS_LIST]);
-
-  const [projectConfigs, setProjectConfigs] = useState<ProjectConfig[]>([]);
+  }, [PROJECTS_LIST, configSelectedProject]);
 
   // Synchronize projectConfigs with projectsDB
   useEffect(() => {
@@ -360,6 +411,7 @@ export default function App() {
         shiftEnd: p.shiftEnd || '18:00',
         workingDays: p.workingDays ? p.workingDays.split(',').map((d: string) => d.trim()) : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
         holidays: p.holidays ? p.holidays.split(',').map((h: string) => h.trim()).filter(Boolean) : [],
+        employeeShifts: p.employeeShifts ? JSON.parse(p.employeeShifts) : [],
       })));
     }
   }, [projectsDB]);
@@ -380,6 +432,7 @@ export default function App() {
       setTempShiftEnd(current.shiftEnd);
       setTempWorkingDays(current.workingDays);
       setTempHolidays(current.holidays.join(', '));
+      setTempEmployeeShifts(current.employeeShifts || []);
     }
   }, [configSelectedProject, projectConfigs]);
 
@@ -435,11 +488,17 @@ export default function App() {
 
   // --- Filtered Tasks ---
   const projectFilteredTasks = useMemo(() => {
-    return tasks.filter(t => 
-      (selectedProject === 'All' || t.projectId === selectedProject) &&
-      (selectedEmployee === 'All' || t.assignedTo === selectedEmployee)
-    );
-  }, [tasks, selectedProject, selectedEmployee]);
+    return tasks.filter(t => {
+      // 1. Mandatory Visibility Check: Admin sees all, others see mapped projects
+      if (!isAdmin && !userMappedProjects.includes(t.projectId)) return false;
+
+      // 2. Interactive Filters
+      const matchProject = selectedProject === 'All' ? true : t.projectId === selectedProject;
+      const matchEmployee = selectedEmployee === 'All' ? true : t.assignedTo === selectedEmployee;
+      
+      return matchProject && matchEmployee;
+    });
+  }, [tasks, selectedProject, selectedEmployee, userMappedProjects, isAdmin]);
 
   // --- KPI Calculations ---
   const kpis = useMemo(() => {
@@ -447,14 +506,12 @@ export default function App() {
     const closedTasks = currentTasks.filter(t => t.closureDate && (t.status === 'Closed' || t.status === 'Resolved'));
     
     const mttrResp = currentTasks.reduce((acc, t) => {
-      const config = projectConfigs.find(c => c.projectId === t.projectId);
-      const val = config ? getBusinessMinutes(t.generationDate, t.responseDate, config) : differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
+      const val = getBusinessMinutes(t.generationDate, t.responseDate, getEffectiveShift(t.projectId, t.assignedTo));
       return acc + val;
     }, 0) / (currentTasks.length || 1);
     
     const mttrReso = closedTasks.reduce((acc, t) => {
-      const config = projectConfigs.find(c => c.projectId === t.projectId);
-      const val = config ? getBusinessMinutes(t.generationDate, t.closureDate!, config) : differenceInMinutes(parseISO(t.closureDate!), parseISO(t.generationDate));
+      const val = getBusinessMinutes(t.generationDate, t.closureDate!, getEffectiveShift(t.projectId, t.assignedTo));
       return acc + val;
     }, 0) / (closedTasks.length || 1);
     
@@ -812,17 +869,15 @@ export default function App() {
       const config = projectConfigs.find(c => c.projectId === t.projectId);
       const slaThresholds = config?.slas?.[t.priority] || { response: 8, resolution: 24 };
       
-      const resolutionTime = (t.closureDate && config) ? getBusinessMinutes(t.generationDate, t.closureDate, config) : (t.closureDate ? differenceInMinutes(parseISO(t.closureDate), parseISO(t.generationDate)) : null);
+      const resolutionTime = t.closureDate ? getBusinessMinutes(t.generationDate, t.closureDate, getEffectiveShift(t.projectId, t.assignedTo)) : null;
       const slaLimit = slaThresholds.resolution * 60;
       const resolutionSlaStatus = resolutionTime !== null ? (resolutionTime <= slaLimit ? 'MET' : 'NOT MET') : 'PENDING';
 
-      const responseTime = config ? getBusinessMinutes(t.generationDate, t.responseDate, config) : differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
+      const responseTime = getBusinessMinutes(t.generationDate, t.responseDate, getEffectiveShift(t.projectId, t.assignedTo));
       const responseSlaLimit = slaThresholds.response * 60;
       const responseSlaStatus = responseTime <= responseSlaLimit ? 'MET' : 'NOT MET';
 
-      const agingMin = config 
-        ? getBusinessMinutes(t.generationDate, t.closureDate ? t.closureDate : new Date().toISOString(), config)
-        : differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate));
+      const agingMin = getBusinessMinutes(t.generationDate, t.closureDate ? t.closureDate : new Date().toISOString(), getEffectiveShift(t.projectId, t.assignedTo));
       
       return {
         'Ticket ID': t.ticketId,
@@ -1149,8 +1204,10 @@ export default function App() {
                     }
                   }}
                 >
-                  <option value="All">All Projects</option>
-                  {projectConfigs.map(p => <option key={p.projectId} value={p.projectId}>{p.projectId}</option>)}
+                  {isAdmin && <option value="All">All Projects</option>}
+                  {projectConfigs
+                    .filter(p => isAdmin || userMappedProjects.includes(p.projectId))
+                    .map(p => <option key={p.projectId} value={p.projectId}>{p.projectId}</option>)}
                 </select>
               <div className="w-[1px] h-4 bg-slate-800 mx-1" />
                <select 
@@ -1158,9 +1215,9 @@ export default function App() {
                   value={selectedEmployee}
                   onChange={e => setSelectedEmployee(e.target.value)}
                 >
-                  <option value="All">All Employees</option>
+                  {isAdmin && <option value="All">All Employees</option>}
                   {(selectedProject === 'All' 
-                    ? Array.from(new Set(projectConfigs.flatMap(c => c.employees)))
+                    ? Array.from(new Set(projectConfigs.filter(p => isAdmin || userMappedProjects.includes(p.projectId)).flatMap(c => c.employees)))
                     : (projectConfigs.find(c => c.projectId === selectedProject)?.employees || [])
                   ).map(u => (
                     <option key={u} value={u}>{u}</option>
@@ -1559,13 +1616,13 @@ export default function App() {
                           
                           // Resolution SLA
                           const slaLimitHrs = config?.slas?.[task.priority]?.resolution || 24;
-                          const resTimeMin = (task.closureDate && config) ? getBusinessMinutes(task.generationDate, task.closureDate, config) : null;
+                          const resTimeMin = task.closureDate ? getBusinessMinutes(task.generationDate, task.closureDate, getEffectiveShift(task.projectId, task.assignedTo)) : null;
                           const isBreached = resTimeMin !== null && resTimeMin > (slaLimitHrs * 60);
                           const delayMin = isBreached ? resTimeMin - (slaLimitHrs * 60) : 0;
 
                           // Response SLA
                           const responseSlaLimitHrs = config?.slas?.[task.priority]?.response || 2;
-                          const responseTimeMin = config ? getBusinessMinutes(task.generationDate, task.responseDate, config) : differenceInMinutes(parseISO(task.responseDate), parseISO(task.generationDate));
+                          const responseTimeMin = getBusinessMinutes(task.generationDate, task.responseDate, getEffectiveShift(task.projectId, task.assignedTo));
                           const isResponseBreached = responseTimeMin > (responseSlaLimitHrs * 60);
                           const responseDelayMin = isResponseBreached ? responseTimeMin - (responseSlaLimitHrs * 60) : 0;
                           const wasResponded = task.status !== 'Open' || task.responseDate !== task.generationDate;
@@ -1659,9 +1716,7 @@ export default function App() {
                               <td className="px-4 py-4 text-center">
                                 <span className="text-xs font-mono text-slate-300">
                                   {(() => {
-                                    const totalMin = config 
-                                      ? getBusinessMinutes(task.generationDate, task.closureDate ? task.closureDate : new Date().toISOString(), config)
-                                      : differenceInMinutes(task.closureDate ? parseISO(task.closureDate) : new Date(), parseISO(task.generationDate));
+                                    const totalMin = getBusinessMinutes(task.generationDate, task.closureDate ? task.closureDate : new Date().toISOString(), getEffectiveShift(task.projectId, task.assignedTo));
                                     const h = Math.floor(Math.max(0, totalMin) / 60);
                                     const m = Math.max(0, totalMin) % 60;
                                     return `${h}:${m.toString().padStart(2, '0')}`;
@@ -1670,18 +1725,25 @@ export default function App() {
                               </td>
                               <td className="px-4 py-4 text-right">
                                 <div className="flex items-center justify-end gap-2">
-                                  <button 
-                                    onClick={() => startEditing(task)}
-                                    className="opacity-0 group-hover:opacity-100 px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded text-[10px] font-bold transition-all"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteTask(task.id)}
-                                    className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded transition-all inline-block"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {(isAdmin || task.assignedTo === currentUser) && (
+                                    <>
+                                      <button 
+                                        onClick={() => startEditing(task)}
+                                        className="opacity-0 group-hover:opacity-100 px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded text-[10px] font-bold transition-all"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button 
+                                        onClick={() => handleDeleteTask(task.id)}
+                                        className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded transition-all inline-block"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </>
+                                  )}
+                                  {!(isAdmin || task.assignedTo === currentUser) && (
+                                    <ShieldAlert className="w-4 h-4 text-slate-700 opacity-20" title="Read Only" />
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -1995,7 +2057,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Segment 3: Configuration Strategy */}
+                {/* Segment 3: Project Based Shifts Allocation */}
                 <div className="chart-container p-8 border-l-4 border-l-blue-500/50">
                   <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
@@ -2003,7 +2065,7 @@ export default function App() {
                         <Settings className="w-6 h-6" />
                       </div>
                       <div>
-                        <h3 className="text-xl font-black text-white leading-tight uppercase tracking-tight">Configuration Strategy</h3>
+                        <h3 className="text-xl font-black text-white leading-tight uppercase tracking-tight">Project Based Shifts Allocation</h3>
                         <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">Operational window and holiday calendar for {currentConfig?.projectId}</p>
                       </div>
                     </div>
@@ -2089,6 +2151,146 @@ export default function App() {
                           onChange={(e) => setTempHolidays(e.target.value)}
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Individual Resource Shifts Allocation */}
+                  <div className="mt-12 pt-12 border-t border-slate-800/50">
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-violet-400" />
+                        <span className="text-[10px] font-black text-white uppercase tracking-widest">Individual Resource Shifts Allocation</span>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                       {/* Form to add/edit employee shift */}
+                       <div className="xl:col-span-1 space-y-4 bg-slate-900/30 p-6 rounded-2xl border border-slate-800/50">
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">Target Personnel</label>
+                              <select 
+                                className="input-field h-10 px-4 text-xs font-bold uppercase tracking-wider bg-slate-950/50"
+                                value={empShiftData.name}
+                                onChange={(e) => setEmpShiftData(prev => ({ ...prev, name: e.target.value }))}
+                              >
+                                <option value="">Select Personnel</option>
+                                {currentConfig?.employees.map(emp => (
+                                  <option key={emp} value={emp}>{emp}</option>
+                                ))}
+                              </select>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-2">
+                                <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">Start</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="09:00"
+                                  className="input-field h-10 px-4 text-xs font-mono bg-slate-950/50" 
+                                  value={empShiftData.shiftStart}
+                                  onChange={(e) => setEmpShiftData(prev => ({ ...prev, shiftStart: e.target.value }))}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">End</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="18:00"
+                                  className="input-field h-10 px-4 text-xs font-mono bg-slate-950/50" 
+                                  value={empShiftData.shiftEnd}
+                                  onChange={(e) => setEmpShiftData(prev => ({ ...prev, shiftEnd: e.target.value }))}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">Working Days</label>
+                              <div className="flex flex-wrap gap-1">
+                                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+                                  <button
+                                    key={day}
+                                    onClick={() => setEmpShiftData(prev => ({
+                                      ...prev,
+                                      workingDays: prev.workingDays.includes(day) 
+                                        ? prev.workingDays.filter(d => d !== day) 
+                                        : [...prev.workingDays, day]
+                                    }))}
+                                    className={cn(
+                                      "px-2 py-1 rounded text-[8px] font-black uppercase transition-all border",
+                                      empShiftData.workingDays.includes(day)
+                                        ? "bg-violet-600 border-violet-500 text-white"
+                                        : "bg-slate-950 border-slate-800 text-slate-600"
+                                    )}
+                                  >
+                                    {day}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <button 
+                              onClick={() => {
+                                if (!empShiftData.name) return;
+                                setTempEmployeeShifts(prev => {
+                                  const existingIdx = prev.findIndex(s => s.name === empShiftData.name);
+                                  if (existingIdx >= 0) {
+                                    const next = [...prev];
+                                    next[existingIdx] = empShiftData;
+                                    return next;
+                                  }
+                                  return [...prev, empShiftData];
+                                });
+                                setEmpShiftData({ name: '', shiftStart: '09:00', shiftEnd: '18:00', workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] });
+                              }}
+                              className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-violet-600/10"
+                            >
+                              Add/Update Individual Shift
+                            </button>
+                          </div>
+                       </div>
+
+                       {/* List of custom shifts */}
+                       <div className="xl:col-span-2 overflow-x-auto glass-panel border border-slate-800/50 rounded-2xl">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-900/50 border-b border-slate-800">
+                              <tr>
+                                <th className="px-6 py-4 font-black text-[9px] uppercase tracking-widest text-slate-500">Personnel</th>
+                                <th className="px-4 py-4 font-black text-[9px] uppercase tracking-widest text-slate-500">Window</th>
+                                <th className="px-4 py-4 font-black text-[9px] uppercase tracking-widest text-slate-500">Working Days</th>
+                                <th className="px-4 py-4 font-black text-[9px] uppercase tracking-widest text-slate-500 text-right pr-6">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/30">
+                              {tempEmployeeShifts.map((s, idx) => (
+                                <tr key={idx} className="hover:bg-slate-800/20 group">
+                                  <td className="px-6 py-4 font-black text-[10px] text-slate-300 uppercase tracking-wider">{s.name}</td>
+                                  <td className="px-4 py-4 font-mono text-[10px] text-slate-400">{s.shiftStart} - {s.shiftEnd}</td>
+                                  <td className="px-4 py-4">
+                                    <div className="flex flex-wrap gap-1">
+                                      {s.workingDays.map(d => (
+                                        <span key={d} className="px-1.5 py-0.5 bg-slate-800/50 rounded text-[8px] font-black text-slate-500 uppercase border border-slate-700/30">{d}</span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-4 text-right pr-6">
+                                    <button 
+                                      onClick={() => setTempEmployeeShifts(prev => prev.filter((_, i) => i !== idx))}
+                                      className="p-2 text-slate-600 hover:text-red-400 transition-colors bg-slate-800/50 rounded-lg hover:bg-red-500/10"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                              {tempEmployeeShifts.length === 0 && (
+                                <tr>
+                                  <td colSpan={4} className="px-6 py-12 text-center text-[10px] font-black text-slate-700 uppercase tracking-widest">No individual shifts defined for this project</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                       </div>
                     </div>
                   </div>
                 </div>
@@ -2208,11 +2410,11 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 3rd segment: Configuration Strategy Details */}
+                {/* 3rd segment: Project Based Shifts Details */}
                 <div className="chart-container overflow-hidden">
                   <div className="p-6 border-b border-slate-800/50 flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Configuration Strategy Details</h3>
+                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Project Based Shifts Allocation Details</h3>
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Working window and holiday schedules per project</p>
                     </div>
                     <div className="px-3 py-1 bg-violet-500/10 border border-violet-500/20 rounded text-[10px] font-black text-violet-500 uppercase tracking-widest">
@@ -2227,6 +2429,7 @@ export default function App() {
                           <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Working Window</th>
                           <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Working Days</th>
                           <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Holidays</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Individual Overrides</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/30">
@@ -2255,6 +2458,17 @@ export default function App() {
                                   <span className="text-[9px] text-slate-500 font-mono italic">
                                     {config.holidays.length > 0 ? config.holidays.join(', ') : 'No holidays configured'}
                                   </span>
+                               </div>
+                            </td>
+                            <td className="px-6 py-4">
+                               <div className="flex flex-col gap-1">
+                                  {config.employeeShifts.map(s => (
+                                    <div key={s.name} className="flex items-center gap-2">
+                                      <span className="text-[9px] font-black text-violet-400 uppercase tracking-tighter">{s.name}:</span>
+                                      <span className="text-[9px] font-mono text-slate-500">{s.shiftStart}-{s.shiftEnd}</span>
+                                    </div>
+                                  ))}
+                                  {config.employeeShifts.length === 0 && <span className="text-[9px] text-slate-700 font-black uppercase tracking-widest italic">None</span>}
                                </div>
                             </td>
                           </tr>

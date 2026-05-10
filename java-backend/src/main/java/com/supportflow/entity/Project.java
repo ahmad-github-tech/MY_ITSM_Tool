@@ -32,6 +32,8 @@ public class Project {
     private String workingDays = "Mon,Tue,Wed,Thu,Fri";
     @Column(columnDefinition = "TEXT")
     private String holidays = "";
+    @Column(columnDefinition = "TEXT")
+    private String employeeShifts = "[]";
 
     public Project() {}
 
@@ -42,6 +44,7 @@ public class Project {
         this.shiftEnd = "18:00";
         this.workingDays = "Mon,Tue,Wed,Thu,Fri";
         this.holidays = "";
+        this.employeeShifts = "[]";
     }
 
     public Long getId() { return id; }
@@ -91,4 +94,7 @@ public class Project {
 
     public String getHolidays() { return holidays; }
     public void setHolidays(String holidays) { this.holidays = holidays; }
+
+    public String getEmployeeShifts() { return employeeShifts; }
+    public void setEmployeeShifts(String employeeShifts) { this.employeeShifts = employeeShifts; }
 }
