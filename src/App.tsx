@@ -24,10 +24,6 @@ import { cn, formatDuration, downloadCSV, exportToExcel } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Constants ---
-const PROJECTS = ['HR-Portal', 'E-Commerce', 'Internal-CRM', 'Mobile-App'];
-const USERS = ['John.D', 'Sarah.M', 'Admin', 'Support.Alpha'];
-
-// --- Mock Data ---
 const ISSUE_TEMPLATES = [
   'Network Connectivity Loss',
   'VPN Authentication Failed',
@@ -41,86 +37,256 @@ const ISSUE_TEMPLATES = [
   'Storage Limit Warning'
 ];
 
-const MOCK_TASKS: SupportTask[] = [
-  ...Array.from({ length: 150 }).map((_, i) => {
-    const genDate = subDays(new Date(), Math.floor(Math.random() * 100));
-    const respDate = new Date(genDate.getTime() + Math.random() * 1000 * 60 * 60 * 2);
-    const closureDate = Math.random() > 0.3 ? new Date(respDate.getTime() + Math.random() * 1000 * 60 * 60 * 24) : null;
-    const status: TaskStatus = closureDate ? (Math.random() > 0.2 ? 'Closed' : 'Resolved') : 'In-Progress';
-    
-    return {
-      id: i + 1,
-      ticketId: `INC-${1000 + i}`,
-      projectId: PROJECTS[Math.floor(Math.random() * PROJECTS.length)],
-      supportLevel: ['L1', 'L2', 'L3', 'L4'][Math.floor(Math.random() * 4)] as SupportLevel,
-      priority: ['P1', 'P2', 'P3', 'P4'][Math.floor(Math.random() * 4)] as Priority,
-      generationDate: genDate.toISOString(),
-      responseDate: respDate.toISOString(),
-      closureDate: closureDate ? closureDate.toISOString() : null,
-      status,
-      userIntimated: status === 'Closed' ? Math.random() > 0.2 : false,
-      description: ISSUE_TEMPLATES[Math.floor(Math.random() * ISSUE_TEMPLATES.length)],
-      solution: 'Standard system protocol followed and resolved.',
-      remarks: 'Monitored for stability.',
-      assignedTo: USERS[Math.floor(Math.random() * USERS.length)],
-    };
-  })
-];
-
 // --- API Utils ---
 const API_BASE = 'http://localhost:8080/supportflow/api/tasks';
+const API_PROJECTS = 'http://localhost:8080/supportflow/api/projects';
 
 export default function App() {
   const [tasks, setTasks] = useState<SupportTask[]>([]);
+  const [projectsDB, setProjectsDB] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch tasks on mount
+  // Fetch tasks and projects on mount
   useEffect(() => {
-    fetchTasks();
+    const initFetch = async () => {
+      setLoading(true);
+      await Promise.all([fetchTasks(), fetchProjects()]);
+      setLoading(false);
+    };
+    initFetch();
   }, []);
 
   const fetchTasks = async () => {
-    setLoading(true);
     try {
       const response = await fetch(API_BASE);
       if (response.ok) {
         const data = await response.json();
         setTasks(data);
-      } else {
-        console.error('Failed to fetch tasks');
-        // Fallback to empty or mock if needed
       }
     } catch (error) {
-      console.error('Error connecting to backend:', error);
-    } finally {
-      setLoading(false);
+      console.error('Error connecting to backend (tasks):', error);
     }
   };
+
+  const fetchProjects = async () => {
+    try {
+      const response = await fetch(API_PROJECTS);
+      if (response.ok) {
+        const data = await response.json();
+        setProjectsDB(data);
+      }
+    } catch (error) {
+      console.error('Error connecting to backend (projects):', error);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details'>('analytics');
-  const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
+  const handleAddProject = async () => {
+    if (!newProjectInput.trim() || projectsDB.find(p => p.name === newProjectInput)) return;
+    
+    const newProj = {
+      name: newProjectInput,
+      description: `Project ${newProjectInput}`,
+      employees: 'John.D, Sarah.M, Admin, Support.Alpha', // Default initial employees
+      p1ResponseSla: 2, p1ResolutionSla: 4,
+      p2ResponseSla: 4, p2ResolutionSla: 8,
+      p3ResponseSla: 8, p3ResolutionSla: 24,
+      p4ResponseSla: 24, p4ResolutionSla: 48,
+    };
+
+    try {
+      const response = await fetch(API_PROJECTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProj),
+      });
+
+      if (response.ok) {
+        await fetchProjects();
+        setNewProjectInput('');
+        setConfigSelectedProject(newProjectInput);
+      }
+    } catch (error) {
+      console.error('Error adding project:', error);
+    }
+  };
+
+  const handleDeleteProject = async (name: string) => {
+    const project = projectsDB.find(p => p.name === name);
+    if (!project) return;
+
+    askConfirmation(
+      'Terminate Project',
+      `Deleting "${name}" will remove all associated configurations and mappings. Continue?`,
+      async () => {
+        try {
+          const response = await fetch(`${API_PROJECTS}/${project.id}`, { method: 'DELETE' });
+          if (response.ok) {
+            await fetchProjects();
+            const remaining = projectsDB.filter(p => p.name !== name);
+            if (remaining.length > 0) setConfigSelectedProject(remaining[0].name);
+            else setConfigSelectedProject('');
+          }
+        } catch (error) {
+          console.error('Error deleting project:', error);
+        }
+      }
+    );
+  };
+
+  const handleUpdateSla = async () => {
+    const project = projectsDB.find(p => p.name === configSelectedProject);
+    if (!project) return;
+
+    const payload = {
+      ...project,
+      p1ResponseSla: tempProjectSlas.P1.response,
+      p1ResolutionSla: tempProjectSlas.P1.resolution,
+      p2ResponseSla: tempProjectSlas.P2.response,
+      p2ResolutionSla: tempProjectSlas.P2.resolution,
+      p3ResponseSla: tempProjectSlas.P3.response,
+      p3ResolutionSla: tempProjectSlas.P3.resolution,
+      p4ResponseSla: tempProjectSlas.P4.response,
+      p4ResolutionSla: tempProjectSlas.P4.resolution,
+    };
+
+    try {
+      const response = await fetch(API_PROJECTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) {
+        await fetchProjects();
+        alert('SLA settings updated successfully in Database');
+      }
+    } catch (error) {
+      console.error('Error updating SLA:', error);
+    }
+  };
+  const handlePersonnelMapping = async () => {
+    if (!personnelInput.trim() || selectedProjectsForMapping.length === 0) return;
+    
+    const name = selectedRole.trim() 
+      ? `${personnelInput.trim()} [${selectedRole.trim()}]` 
+      : personnelInput.trim();
+
+    // Iterate through projectsDB and update those in selectedProjectsForMapping
+    const updates = projectsDB.map(async (p) => {
+      if (selectedProjectsForMapping.includes(p.name)) {
+        let currentEmployees = p.employees ? p.employees.split(',').map((e: string) => e.trim()).filter(Boolean) : [];
+        
+        // If editing, handle rename/move
+        if (editingEmployee) {
+          currentEmployees = currentEmployees.filter(e => e !== editingEmployee.originalName);
+        }
+
+        if (!currentEmployees.includes(name)) {
+          currentEmployees.push(name);
+        }
+
+        const payload = { ...p, employees: currentEmployees.join(', ') };
+        return fetch(API_PROJECTS, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      return Promise.resolve();
+    });
+
+    try {
+      await Promise.all(updates);
+      await fetchProjects();
+      setPersonnelInput('');
+      setSelectedRole('');
+      setSelectedProjectsForMapping([]);
+      setEditingEmployee(null);
+    } catch (error) {
+      console.error('Error updating personnel mapping:', error);
+    }
+  };
+
+  const handleUnmapResource = async (emp: string) => {
+    askConfirmation(
+      'Unmap Resource',
+      `Are you sure you want to remove "${emp}" from the selected project mappings?`,
+      async () => {
+        const updates = projectsDB.map(async (p) => {
+          if (selectedProjectsForMapping.includes(p.name)) {
+            let currentEmployees = p.employees ? p.employees.split(',').map((e: string) => e.trim()).filter(Boolean) : [];
+            currentEmployees = currentEmployees.filter(e => e !== emp);
+            
+            const payload = { ...p, employees: currentEmployees.join(', ') };
+            return fetch(API_PROJECTS, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          }
+          return Promise.resolve();
+        });
+
+        try {
+          await Promise.all(updates);
+          await fetchProjects();
+        } catch (error) {
+          console.error('Error unmapping resource:', error);
+        }
+      }
+    );
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedProject, setSelectedProject] = useState<string>('All');
   const [selectedEmployee, setSelectedEmployee] = useState<string>('All');
   const [editingTask, setEditingTask] = useState<SupportTask | null>(null);
-  const [currentUser] = useState(USERS[0]);
-  const [configSelectedProject, setConfigSelectedProject] = useState<string>(PROJECTS[0]);
-  const [projectConfigs, setProjectConfigs] = useState<ProjectConfig[]>(
-    PROJECTS.map(id => ({
-      projectId: id,
-      employees: [...USERS], // Default to all users initially
-      slas: {
-        P1: { response: 2, resolution: 4 },
-        P2: { response: 4, resolution: 8 },
-        P3: { response: 8, resolution: 24 },
-        P4: { response: 24, resolution: 48 },
-      }
-    }))
-  );
+  
+  // Dynamic Projects List
+  const PROJECTS_LIST = useMemo(() => projectsDB.map(p => p.name), [projectsDB]);
+  const [currentUser] = useState('Admin'); // Fallback to Admin from USERS if still hardcoded
+  
+  const [configSelectedProject, setConfigSelectedProject] = useState<string>('');
 
-  const [tempProjectSlas, setTempProjectSlas] = useState<ProjectConfig['slas']>(
-    (projectConfigs.find(c => c.projectId === configSelectedProject) || projectConfigs[0]).slas
-  );
+  // Sync configSelectedProject when projects load
+  useEffect(() => {
+    if (PROJECTS_LIST.length > 0 && !configSelectedProject) {
+      setConfigSelectedProject(PROJECTS_LIST[0]);
+    }
+  }, [PROJECTS_LIST]);
+
+  const [projectConfigs, setProjectConfigs] = useState<ProjectConfig[]>([]);
+
+  // Synchronize projectConfigs with projectsDB
+  useEffect(() => {
+    if (projectsDB.length > 0) {
+      setProjectConfigs(projectsDB.map(p => ({
+        projectId: p.name,
+        employees: p.employees ? p.employees.split(',').map((e: string) => e.trim()) : [],
+        slas: {
+          P1: { response: p.p1ResponseSla || 2, resolution: p.p1ResolutionSla || 4 },
+          P2: { response: p.p2ResponseSla || 4, resolution: p.p2ResolutionSla || 8 },
+          P3: { response: p.p3ResponseSla || 8, resolution: p.p3ResolutionSla || 24 },
+          P4: { response: p.p4ResponseSla || 24, resolution: p.p4ResolutionSla || 48 },
+        }
+      })));
+    }
+  }, [projectsDB]);
+
+  const [tempProjectSlas, setTempProjectSlas] = useState<ProjectConfig['slas']>({
+    P1: { response: 2, resolution: 4 },
+    P2: { response: 4, resolution: 8 },
+    P3: { response: 8, resolution: 24 },
+    P4: { response: 24, resolution: 48 },
+  });
+
+  // Update temp SLA when config selected project changes
+  useEffect(() => {
+    const current = projectConfigs.find(c => c.projectId === configSelectedProject);
+    if (current) {
+      setTempProjectSlas(current.slas);
+    }
+  }, [configSelectedProject, projectConfigs]);
 
   const [configChanges, setConfigChanges] = useState<{
     id: string;
@@ -147,7 +313,7 @@ export default function App() {
   // --- Form State ---
   const [formData, setFormData] = useState<Partial<SupportTask>>({
     ticketId: '',
-    projectId: PROJECTS[0],
+    projectId: '',
     supportLevel: 'L1',
     priority: 'P3',
     status: 'Open',
@@ -158,8 +324,15 @@ export default function App() {
     description: '',
     solution: '',
     remarks: '',
-    assignedTo: USERS[0],
+    assignedTo: 'Admin',
   });
+
+  // Reset projectId in formData when projects load
+  useEffect(() => {
+    if (PROJECTS_LIST.length > 0 && !formData.projectId) {
+      setFormData(prev => ({ ...prev, projectId: PROJECTS_LIST[0] }));
+    }
+  }, [PROJECTS_LIST]);
 
   // --- Filtered Tasks ---
   const projectFilteredTasks = useMemo(() => {
@@ -366,21 +539,21 @@ export default function App() {
         }
         
         // Reset form
-        setFormData({
-          ticketId: '',
-          projectId: PROJECTS[0],
-          supportLevel: 'L1',
-          priority: 'P3',
-          status: 'Open',
-          generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-          responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-          closureDate: '',
-          userIntimated: false,
-          description: '',
-          solution: '',
-          remarks: '',
-          assignedTo: currentUser,
-        });
+          setFormData({
+            ticketId: '',
+            projectId: PROJECTS_LIST[0] || '',
+            supportLevel: 'L1',
+            priority: 'P3',
+            status: 'Open',
+            generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+            responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+            closureDate: '',
+            userIntimated: false,
+            description: '',
+            solution: '',
+            remarks: '',
+            assignedTo: currentUser,
+          });
       }
     } catch (error) {
       console.error('Error saving task:', error);
@@ -431,7 +604,7 @@ export default function App() {
     setEditingTask(null);
     setFormData({
       ticketId: '',
-      projectId: PROJECTS[0],
+      projectId: PROJECTS_LIST[0] || '',
       supportLevel: 'L1',
       priority: 'P3',
       status: 'Open',
@@ -574,11 +747,11 @@ export default function App() {
                   onChange={e => {
                     const newProjectId = e.target.value;
                     const config = projectConfigs.find(c => c.projectId === newProjectId);
-                    const available = config?.employees || USERS;
+                    const available = config?.employees || [];
                     setFormData({ 
                       ...formData, 
                       projectId: newProjectId,
-                      assignedTo: available.includes(formData.assignedTo || '') ? formData.assignedTo : available[0]
+                      assignedTo: available.includes(formData.assignedTo || '') ? formData.assignedTo : (available[0] || 'Admin')
                     });
                   }}
                 >
@@ -615,7 +788,7 @@ export default function App() {
                   value={formData.assignedTo}
                   onChange={e => setFormData({ ...formData, assignedTo: e.target.value })}
                 >
-                  {(projectConfigs.find(c => c.projectId === formData.projectId)?.employees || USERS).map(u => (
+                  {(projectConfigs.find(c => c.projectId === formData.projectId)?.employees || []).map(u => (
                     <option key={u} value={u}>{u}</option>
                   ))}
                 </select>
@@ -1334,58 +1507,15 @@ export default function App() {
                       />
                     </div>
                     <button 
-                      onClick={() => {
-                        if (!newProjectInput.trim() || projectConfigs.find(p => p.projectId === newProjectInput)) return;
-                        const newProj: ProjectConfig = {
-                          projectId: newProjectInput,
-                          slas: {
-                            P1: { response: 0, resolution: 0 },
-                            P2: { response: 0, resolution: 0 },
-                            P3: { response: 0, resolution: 0 },
-                            P4: { response: 0, resolution: 0 },
-                          },
-                          employees: []
-                        };
-                        setProjectConfigs(prev => [...prev, newProj]);
-                        setConfigChanges(prev => [{
-                          id: Math.random().toString(36).substr(2, 9),
-                          projectId: newProjectInput,
-                          type: 'Employee', // Using Employee as catch-all or shared with infrastructure
-                          detail: `Infrastructure Provisioned: "${newProjectInput}" initialized in governance domain`,
-                          timestamp: new Date().toISOString(),
-                          user: currentUser
-                        }, ...prev]);
-                        setNewProjectInput('');
-                        setConfigSelectedProject(newProjectInput);
-                      }}
+                      onClick={handleAddProject}
                       className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-500/20 flex items-center gap-2"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       Add Project
                     </button>
-                    {projectConfigs.length > 1 && (
+                    {projectsDB.length > 1 && (
                       <button 
-                         onClick={() => {
-                           const id = configSelectedProject;
-                           if (projectConfigs.length <= 1) return;
-                           askConfirmation(
-                             'Terminate Project',
-                             `Deleting "${id}" will remove all associated configurations and mappings. Continue?`,
-                             () => {
-                               setProjectConfigs(prev => prev.filter(p => p.projectId !== id));
-                               const remaining = projectConfigs.filter(p => p.projectId !== id);
-                               setConfigSelectedProject(remaining[0].projectId);
-                               setConfigChanges(prev => [{
-                                 id: Math.random().toString(36).substr(2, 9),
-                                 projectId: id,
-                                 type: 'Employee',
-                                 detail: `Infrastructure Terminated: De-provisioned "${id}" from environment`,
-                                 timestamp: new Date().toISOString(),
-                                 user: currentUser
-                               }, ...prev]);
-                             }
-                           );
-                         }}
+                         onClick={() => handleDeleteProject(configSelectedProject)}
                          className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
                          title="Delete Selected Project"
                       >
@@ -1443,26 +1573,7 @@ export default function App() {
                         <Trash2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
                       </button>
                       <button 
-                        onClick={() => {
-                          setProjectConfigs(prev => prev.map(c => 
-                            c.projectId === currentConfig.projectId 
-                              ? { ...c, slas: { ...tempProjectSlas } }
-                              : c
-                          ));
-                          
-                          const slaSummary = (['P1', 'P2', 'P3', 'P4'] as Priority[]).map(p => 
-                            `${p}:[Request:${tempProjectSlas[p].response}h|Resolution:${tempProjectSlas[p].resolution}h]`
-                          ).join(' | ');
-
-                          setConfigChanges(prev => [{
-                            id: Math.random().toString(36).substr(2, 9),
-                            projectId: currentConfig.projectId,
-                            type: 'SLA',
-                            detail: `Tag SLA: ${slaSummary}`,
-                            timestamp: new Date().toISOString(),
-                            user: currentUser
-                          }, ...prev]);
-                        }}
+                        onClick={handleUpdateSla}
                         className="btn-primary flex items-center gap-2 px-8 py-3 shadow-xl shadow-blue-500/10 uppercase font-black tracking-widest text-[11px] bg-blue-600 hover:bg-blue-500"
                       >
                         <Plus className="w-4 h-4" />
@@ -1619,27 +1730,7 @@ export default function App() {
                                     <span className="text-[10px] font-bold text-slate-300 truncate max-w-[120px]">{emp}</span>
                                   </div>
                                   <button 
-                                    onClick={() => {
-                                      askConfirmation(
-                                        'Unmap Resource',
-                                        `Are you sure you want to remove "${emp}" from the selected project mappings?`,
-                                        () => {
-                                          setProjectConfigs(prev => prev.map(c => 
-                                            selectedProjectsForMapping.includes(c.projectId)
-                                              ? { ...c, employees: c.employees.filter(e => e !== emp) }
-                                              : c
-                                          ));
-                                          setConfigChanges(prev => [{
-                                            id: Math.random().toString(36).substr(2, 9),
-                                            projectId: selectedProjectsForMapping.join(', '),
-                                            type: 'Employee',
-                                            detail: `Resource Deletion: Dropped "${emp}" from active mapping context`,
-                                            timestamp: new Date().toISOString(),
-                                            user: currentUser
-                                          }, ...prev]);
-                                        }
-                                      );
-                                    }}
+                                    onClick={() => handleUnmapResource(emp)}
                                     className="p-1 text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
                                   >
                                     <Trash2 className="w-3 h-3" />
@@ -1671,46 +1762,7 @@ export default function App() {
                         </button>
                       )}
                       <button 
-                        onClick={() => {
-                          if (!personnelInput.trim() || selectedProjectsForMapping.length === 0) return;
-                          
-                          const name = selectedRole.trim() 
-                            ? `${personnelInput.trim()} [${selectedRole.trim()}]` 
-                            : personnelInput.trim();
-                          
-                          // If editing, first remove the old mapping to allow "moving" or renaming
-                          if (editingEmployee) {
-                             setProjectConfigs(prev => prev.map(c => ({
-                               ...c,
-                               employees: c.employees.filter(e => e !== editingEmployee.originalName)
-                             })));
-                          }
-
-                          setProjectConfigs(prev => prev.map(c => 
-                            selectedProjectsForMapping.includes(c.projectId) && !c.employees.includes(name)
-                              ? { ...c, employees: [...c.employees, name] }
-                              : c
-                          ));
-
-                          setConfigChanges(prev => [
-                            {
-                              id: Math.random().toString(36).substr(2, 9),
-                              projectId: selectedProjectsForMapping.join(', '),
-                              type: 'Employee',
-                              detail: editingEmployee 
-                                ? `Resource Modification: Updated "${editingEmployee.originalName}" to "${name}" and re-allocated projects`
-                                : `Resource Tagging: Allocated "${name}" to ${selectedProjectsForMapping.length} projects`,
-                              timestamp: new Date().toISOString(),
-                              user: currentUser
-                            },
-                            ...prev
-                          ]);
-
-                          setPersonnelInput('');
-                          setSelectedRole('');
-                          setSelectedProjectsForMapping([]);
-                          setEditingEmployee(null);
-                        }}
+                        onClick={handlePersonnelMapping}
                         disabled={!personnelInput.trim() || selectedProjectsForMapping.length === 0}
                         className={cn(
                           "btn-primary flex items-center gap-2 px-12 py-4 shadow-xl uppercase font-black tracking-[0.2em] text-[11px] transition-all",

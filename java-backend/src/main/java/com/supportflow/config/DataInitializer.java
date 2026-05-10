@@ -1,6 +1,8 @@
 package com.supportflow.config;
 
+import com.supportflow.entity.Project;
 import com.supportflow.entity.SupportTask;
+import com.supportflow.repository.ProjectRepository;
 import com.supportflow.repository.TaskRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
@@ -16,9 +18,29 @@ public class DataInitializer {
     @Autowired
     private TaskRepository taskRepository;
 
+    @Autowired
+    private ProjectRepository projectRepository;
+
     @Bean
     public CommandLineRunner initData() {
         return args -> {
+            if (projectRepository.count() == 0) {
+                System.out.println("Initializing sample projects...");
+                Project p1 = new Project("HR-Portal");
+                p1.setDescription("Human Resources Management System");
+                
+                Project p2 = new Project("E-Commerce");
+                p2.setDescription("Online Shopping Platform");
+                
+                Project p3 = new Project("Internal-CRM");
+                p3.setDescription("Customer Relationship Management");
+                
+                Project p4 = new Project("Mobile-App");
+                p4.setDescription("Native Android and iOS Apps");
+
+                projectRepository.saveAll(Arrays.asList(p1, p2, p3, p4));
+            }
+
             if (taskRepository.count() == 0) {
                 System.out.println("Initializing sample data...");
                 
