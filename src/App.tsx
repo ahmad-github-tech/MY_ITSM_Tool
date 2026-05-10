@@ -81,6 +81,7 @@ export default function App() {
   };
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details'>('analytics');
+  const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
   const handleAddProject = async () => {
     if (!newProjectInput.trim() || projectsDB.find(p => p.name === newProjectInput)) return;
     
@@ -304,7 +305,7 @@ export default function App() {
   const [editingEmployee, setEditingEmployee] = useState<{ projectId: string; originalName: string; currentName: string } | null>(null);
 
   // Derived mapping summary for the currently selected projects in the mapping tool
-  const mappedInSelection = Array.from(new Set(
+  const mappedInSelection = Array.from(new Set<string>(
     projectConfigs
       .filter(p => selectedProjectsForMapping.includes(p.projectId))
       .flatMap(p => p.employees)
