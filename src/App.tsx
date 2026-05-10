@@ -130,9 +130,14 @@ export default function App() {
           const response = await fetch(`${API_PROJECTS}/${project.id}`, { method: 'DELETE' });
           if (response.ok) {
             await fetchProjects();
-            const remaining = projectsDB.filter(p => p.name !== name);
-            if (remaining.length > 0) setConfigSelectedProject(remaining[0].name);
-            else setConfigSelectedProject('');
+            setProjectsDB(prev => {
+              const remaining = prev.filter(p => p.name !== name);
+              if (remaining.length > 0) setConfigSelectedProject(remaining[0].name);
+              else setConfigSelectedProject('');
+              return remaining;
+            });
+          } else {
+            console.error('Project deletion failed:', response.status);
           }
         } catch (error) {
           console.error('Error deleting project:', error);
@@ -180,9 +185,7 @@ export default function App() {
   const handlePersonnelMapping = async () => {
     if (!personnelInput.trim() || selectedProjectsForMapping.length === 0) return;
     
-    const name = selectedRole.trim() 
-      ? `${personnelInput.trim()} [${selectedRole.trim()}]` 
-      : personnelInput.trim();
+    const name = personnelInput.trim();
 
     askConfirmation(
       editingEmployee ? 'Update Specialist Mapping' : 'Commit Personnel Mapping',
@@ -218,7 +221,6 @@ export default function App() {
           await Promise.all(updates);
           await fetchProjects();
           setPersonnelInput('');
-          setSelectedRole('');
           setSelectedProjectsForMapping([]);
           setEditingEmployee(null);
         } catch (error) {
@@ -321,7 +323,6 @@ export default function App() {
   const [newProjectInput, setNewProjectInput] = useState('');
   const [selectedProjectsForMapping, setSelectedProjectsForMapping] = useState<string[]>([]);
   const [personnelInput, setPersonnelInput] = useState('');
-  const [selectedRole, setSelectedRole] = useState('');
   const [editingEmployee, setEditingEmployee] = useState<{ projectId: string; originalName: string; currentName: string } | null>(null);
 
   // Derived mapping summary for the currently selected projects in the mapping tool
@@ -564,15 +565,12 @@ export default function App() {
 
           if (response.ok) {
             const savedTask = await response.json();
-            let updatedTasks = [...tasks];
-            if (editingTask) {
-              updatedTasks = tasks.map(t => t.id === editingTask.id ? savedTask : t);
-              setTasks(updatedTasks);
-              setEditingTask(null);
-            } else {
-              updatedTasks = [savedTask, ...tasks];
-              setTasks(updatedTasks);
-            }
+            const updatedTasks = editingTask 
+              ? tasks.map(t => t.id === editingTask.id ? savedTask : t)
+              : [savedTask, ...tasks];
+            
+            setTasks(updatedTasks);
+            setEditingTask(null);
             
             // Reset form
             const firstProj = PROJECTS_LIST[0] || '';
@@ -607,7 +605,9 @@ export default function App() {
           method: 'DELETE',
         });
         if (response.ok) {
-          setTasks(tasks.filter(t => t.id !== id));
+          setTasks(prev => prev.filter(t => t.id !== id));
+        } else {
+          console.error('Delete failed:', response.status);
         }
       } catch (error) {
         console.error('Error deleting task:', error);
@@ -1530,11 +1530,7 @@ export default function App() {
                                     Edit
                                   </button>
                                   <button 
-                                    onClick={() => askConfirmation(
-                                      'Delete Record',
-                                      'Are you sure you want to permanently remove this support incident record?',
-                                      () => handleDeleteTask(task.id)
-                                    )}
+                                    onClick={() => handleDeleteTask(task.id)}
                                     className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded transition-all inline-block"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -1735,16 +1731,6 @@ export default function App() {
                             placeholder="Enter Name..."
                             value={personnelInput}
                             onChange={(e) => setPersonnelInput(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Functional Role</label>
-                          <input 
-                            type="text"
-                            className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 outline-none transition-all shadow-inner"
-                            placeholder="Engineering Lead, SRE, etc..."
-                            value={selectedRole}
-                            onChange={(e) => setSelectedRole(e.target.value)}
                           />
                         </div>
                       </div>
