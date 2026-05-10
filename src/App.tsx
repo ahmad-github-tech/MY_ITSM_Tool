@@ -308,7 +308,7 @@ export default function App() {
   const mappedInSelection = Array.from(new Set<string>(
     projectConfigs
       .filter(p => selectedProjectsForMapping.includes(p.projectId))
-      .flatMap(p => p.employees)
+      .flatMap(p => p.employees || [])
   ));
 
   // --- Form State ---
@@ -365,12 +365,14 @@ export default function App() {
     };
   }, [projectFilteredTasks]);
 
-  const currentConfig = projectConfigs.find(c => c.projectId === configSelectedProject)!;
+  const currentConfig = projectConfigs.find(c => c.projectId === configSelectedProject);
   const configPIndex = projectConfigs.findIndex(c => c.projectId === configSelectedProject);
 
-  React.useEffect(() => {
-    setTempProjectSlas(currentConfig.slas);
-  }, [configSelectedProject]);
+  useEffect(() => {
+    if (currentConfig) {
+      setTempProjectSlas(currentConfig.slas);
+    }
+  }, [configSelectedProject, projectConfigs]);
 
   // --- Chart Data ---
   const charts = useMemo(() => {
@@ -646,7 +648,7 @@ export default function App() {
     // 1. Data Sheet (Tickets)
     const ticketData = currentTasks.map(t => {
       const config = projectConfigs.find(c => c.projectId === t.projectId);
-      const slaThresholds = config?.slas[t.priority] || { response: 8, resolution: 24 };
+      const slaThresholds = config?.slas?.[t.priority] || { response: 8, resolution: 24 };
       
       const resolutionTime = t.closureDate ? differenceInMinutes(parseISO(t.closureDate), parseISO(t.generationDate)) : null;
       const slaLimit = slaThresholds.resolution * 60;
@@ -1371,7 +1373,7 @@ export default function App() {
                       <tbody className="divide-y divide-slate-800/50">
                         {filteredTasks.map(task => {
                           const config = projectConfigs.find(c => c.projectId === task.projectId);
-                          const slaLimitHrs = config?.slas[task.priority].resolution || 24;
+                          const slaLimitHrs = config?.slas?.[task.priority]?.resolution || 24;
                           const resTimeMin = task.closureDate ? differenceInMinutes(parseISO(task.closureDate), parseISO(task.generationDate)) : null;
                           const isBreached = resTimeMin !== null && resTimeMin > (slaLimitHrs * 60);
                           const delayMin = isBreached ? resTimeMin - (slaLimitHrs * 60) : 0;
@@ -1827,11 +1829,11 @@ export default function App() {
                                       <div className="flex flex-row gap-3 border-l border-slate-700 pl-2">
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none">Request</span>
-                                          <span className="text-[10px] font-bold text-slate-200 leading-none">{config.slas[p].response}h</span>
+                                          <span className="text-[10px] font-bold text-slate-200 leading-none">{config.slas?.[p]?.response || 0}h</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none">Resolution</span>
-                                          <span className="text-[10px] font-bold text-slate-200 leading-none">{config.slas[p].resolution}h</span>
+                                          <span className="text-[10px] font-bold text-slate-200 leading-none">{config.slas?.[p]?.resolution || 0}h</span>
                                         </div>
                                       </div>
                                     </div>
