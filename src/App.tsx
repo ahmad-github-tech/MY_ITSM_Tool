@@ -1537,15 +1537,16 @@ export default function App() {
                       </div>
                       <div>
                         <h3 className="text-xl font-black text-white leading-tight uppercase tracking-tight">SLA Configuration</h3>
-                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">Definition of service level benchmarks for {currentConfig.projectId}</p>
+                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">Definition of service level benchmarks for {currentConfig?.projectId || 'Selected Project'}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <button 
                         onClick={() => {
+                          if (!currentConfig) return;
                           askConfirmation(
                             'Reset SLA Configuration',
-                            `This will reset all service level benchmarks for ${currentConfig.projectId} to zero. Continue?`,
+                            `This will reset all service level benchmarks for ${currentConfig?.projectId} to zero. Continue?`,
                             () => {
                               const resetSlas = {
                                 P1: { response: 0, resolution: 0 },
@@ -1555,29 +1556,31 @@ export default function App() {
                               };
                               setTempProjectSlas(resetSlas);
                               setProjectConfigs(prev => prev.map(c => 
-                                c.projectId === currentConfig.projectId 
+                                c.projectId === currentConfig?.projectId 
                                   ? { ...c, slas: resetSlas }
                                   : c
                               ));
                               setConfigChanges(prev => [{
                                 id: Math.random().toString(36).substr(2, 9),
-                                projectId: currentConfig.projectId,
+                                projectId: currentConfig?.projectId || configSelectedProject,
                                 type: 'SLA',
-                                detail: `SLA Configuration Deleted: Targets reset to zero for ${currentConfig.projectId}`,
+                                detail: `SLA Configuration Deleted: Targets reset to zero for ${currentConfig?.projectId || configSelectedProject}`,
                                 timestamp: new Date().toISOString(),
                                 user: currentUser
                               }, ...prev]);
                             }
                           );
                         }}
-                        className="p-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl border border-red-500/20 transition-all group"
+                        disabled={!currentConfig}
+                        className="p-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl border border-red-500/20 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Delete/Reset Configuration"
                       >
                         <Trash2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
                       </button>
                       <button 
                         onClick={handleUpdateSla}
-                        className="btn-primary flex items-center gap-2 px-8 py-3 shadow-xl shadow-blue-500/10 uppercase font-black tracking-widest text-[11px] bg-blue-600 hover:bg-blue-500"
+                        disabled={!currentConfig}
+                        className="btn-primary flex items-center gap-2 px-8 py-3 shadow-xl shadow-blue-500/10 uppercase font-black tracking-widest text-[11px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-4 h-4" />
                         TAG SLA
