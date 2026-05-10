@@ -85,31 +85,37 @@ export default function App() {
   const handleAddProject = async () => {
     if (!newProjectInput.trim() || projectsDB.find(p => p.name === newProjectInput)) return;
     
-    const newProj = {
-      name: newProjectInput,
-      description: `Project ${newProjectInput}`,
-      employees: 'John.D, Sarah.M, Admin, Support.Alpha', // Default initial employees
-      p1ResponseSla: 2, p1ResolutionSla: 4,
-      p2ResponseSla: 4, p2ResolutionSla: 8,
-      p3ResponseSla: 8, p3ResolutionSla: 24,
-      p4ResponseSla: 24, p4ResolutionSla: 48,
-    };
+    askConfirmation(
+      'Initialize New Project',
+      `This will create project "${newProjectInput}" with default SLA and assignment policies. Continue?`,
+      async () => {
+        const newProj = {
+          name: newProjectInput,
+          description: `Project ${newProjectInput}`,
+          employees: 'John.D, Sarah.M, Admin, Support.Alpha', // Default initial employees
+          p1ResponseSla: 2, p1ResolutionSla: 4,
+          p2ResponseSla: 4, p2ResolutionSla: 8,
+          p3ResponseSla: 8, p3ResolutionSla: 24,
+          p4ResponseSla: 24, p4ResolutionSla: 48,
+        };
 
-    try {
-      const response = await fetch(API_PROJECTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProj),
-      });
+        try {
+          const response = await fetch(API_PROJECTS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newProj),
+          });
 
-      if (response.ok) {
-        await fetchProjects();
-        setNewProjectInput('');
-        setConfigSelectedProject(newProjectInput);
+          if (response.ok) {
+            await fetchProjects();
+            setNewProjectInput('');
+            setConfigSelectedProject(newProjectInput);
+          }
+        } catch (error) {
+          console.error('Error adding project:', error);
+        }
       }
-    } catch (error) {
-      console.error('Error adding project:', error);
-    }
+    );
   };
 
   const handleDeleteProject = async (name: string) => {
@@ -139,31 +145,37 @@ export default function App() {
     const project = projectsDB.find(p => p.name === configSelectedProject);
     if (!project) return;
 
-    const payload = {
-      ...project,
-      p1ResponseSla: tempProjectSlas.P1.response,
-      p1ResolutionSla: tempProjectSlas.P1.resolution,
-      p2ResponseSla: tempProjectSlas.P2.response,
-      p2ResolutionSla: tempProjectSlas.P2.resolution,
-      p3ResponseSla: tempProjectSlas.P3.response,
-      p3ResolutionSla: tempProjectSlas.P3.resolution,
-      p4ResponseSla: tempProjectSlas.P4.response,
-      p4ResolutionSla: tempProjectSlas.P4.resolution,
-    };
+    askConfirmation(
+      'Apply SLA Policy Changes',
+      `Updated service level benchmarks will be applied to project "${configSelectedProject}". System calculations will adapt immediately. Confirm?`,
+      async () => {
+        const payload = {
+          ...project,
+          p1ResponseSla: tempProjectSlas.P1.response,
+          p1ResolutionSla: tempProjectSlas.P1.resolution,
+          p2ResponseSla: tempProjectSlas.P2.response,
+          p2ResolutionSla: tempProjectSlas.P2.resolution,
+          p3ResponseSla: tempProjectSlas.P3.response,
+          p3ResolutionSla: tempProjectSlas.P3.resolution,
+          p4ResponseSla: tempProjectSlas.P4.response,
+          p4ResolutionSla: tempProjectSlas.P4.resolution,
+        };
 
-    try {
-      const response = await fetch(API_PROJECTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (response.ok) {
-        await fetchProjects();
-        alert('SLA settings updated successfully in Database');
+        try {
+          const response = await fetch(API_PROJECTS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (response.ok) {
+            await fetchProjects();
+            alert('SLA settings updated successfully in Database');
+          }
+        } catch (error) {
+          console.error('Error updating SLA:', error);
+        }
       }
-    } catch (error) {
-      console.error('Error updating SLA:', error);
-    }
+    );
   };
   const handlePersonnelMapping = async () => {
     if (!personnelInput.trim() || selectedProjectsForMapping.length === 0) return;
@@ -172,40 +184,48 @@ export default function App() {
       ? `${personnelInput.trim()} [${selectedRole.trim()}]` 
       : personnelInput.trim();
 
-    // Iterate through projectsDB and update those in selectedProjectsForMapping
-    const updates = projectsDB.map(async (p) => {
-      if (selectedProjectsForMapping.includes(p.name)) {
-        let currentEmployees = p.employees ? p.employees.split(',').map((e: string) => e.trim()).filter(Boolean) : [];
-        
-        // If editing, handle rename/move
-        if (editingEmployee) {
-          currentEmployees = currentEmployees.filter(e => e !== editingEmployee.originalName);
-        }
+    askConfirmation(
+      editingEmployee ? 'Update Specialist Mapping' : 'Commit Personnel Mapping',
+      editingEmployee 
+        ? `Confirm update for specialist "${editingEmployee.originalName}"?`
+        : `This will map specialist "${personnelInput}" across ${selectedProjectsForMapping.length} project(s). Continue?`,
+      async () => {
+        // Iterate through projectsDB and update those in selectedProjectsForMapping
+        const updates = projectsDB.map(async (p) => {
+          if (selectedProjectsForMapping.includes(p.name)) {
+            let currentEmployees = p.employees ? p.employees.split(',').map((e: string) => e.trim()).filter(Boolean) : [];
+            
+            // If editing, handle rename/move
+            if (editingEmployee) {
+              currentEmployees = currentEmployees.filter(e => e !== editingEmployee.originalName);
+            }
 
-        if (!currentEmployees.includes(name)) {
-          currentEmployees.push(name);
-        }
+            if (!currentEmployees.includes(name)) {
+              currentEmployees.push(name);
+            }
 
-        const payload = { ...p, employees: currentEmployees.join(', ') };
-        return fetch(API_PROJECTS, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+            const payload = { ...p, employees: currentEmployees.join(', ') };
+            return fetch(API_PROJECTS, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          }
+          return Promise.resolve();
         });
-      }
-      return Promise.resolve();
-    });
 
-    try {
-      await Promise.all(updates);
-      await fetchProjects();
-      setPersonnelInput('');
-      setSelectedRole('');
-      setSelectedProjectsForMapping([]);
-      setEditingEmployee(null);
-    } catch (error) {
-      console.error('Error updating personnel mapping:', error);
-    }
+        try {
+          await Promise.all(updates);
+          await fetchProjects();
+          setPersonnelInput('');
+          setSelectedRole('');
+          setSelectedProjectsForMapping([]);
+          setEditingEmployee(null);
+        } catch (error) {
+          console.error('Error updating personnel mapping:', error);
+        }
+      }
+    );
   };
 
   const handleUnmapResource = async (emp: string) => {
@@ -331,9 +351,14 @@ export default function App() {
   // Reset projectId in formData when projects load
   useEffect(() => {
     if (PROJECTS_LIST.length > 0 && !formData.projectId) {
-      setFormData(prev => ({ ...prev, projectId: PROJECTS_LIST[0] }));
+      const firstProj = PROJECTS_LIST[0];
+      setFormData(prev => ({ 
+        ...prev, 
+        projectId: firstProj,
+        ticketId: getNextTicketId(firstProj, tasks)
+      }));
     }
-  }, [PROJECTS_LIST]);
+  }, [PROJECTS_LIST, tasks, formData.projectId]);
 
   // --- Filtered Tasks ---
   const projectFilteredTasks = useMemo(() => {
@@ -504,64 +529,75 @@ export default function App() {
   // --- Handlers ---
   const handleSaveTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Prepare payload (convert strings to ISO dates if necessary for backend)
-    const payload = {
-      ticketId: formData.ticketId || `INC-${1000 + tasks.length}`,
-      projectId: formData.projectId!,
-      supportLevel: formData.supportLevel as SupportLevel,
-      priority: formData.priority as Priority,
-      generationDate: formData.generationDate,
-      responseDate: formData.responseDate,
-      closureDate: formData.closureDate || null,
-      status: formData.status as TaskStatus,
-      userIntimated: formData.userIntimated || false,
-      description: formData.description || '',
-      solution: formData.solution || '',
-      remarks: formData.remarks || '',
-      assignedTo: editingTask ? formData.assignedTo : currentUser,
-    };
 
-    try {
-      const url = editingTask ? `${API_BASE}/${editingTask.id}` : API_BASE;
-      const method = editingTask ? 'PUT' : 'POST';
-      
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    const actionLabel = editingTask ? 'Update' : 'Commit New';
+    askConfirmation(
+      `${actionLabel} Ticket Record`,
+      `Are you sure you want to ${editingTask ? 'update' : 'add'} this ticket record to the database?`,
+      async () => {
+        // Prepare payload (convert strings to ISO dates if necessary for backend)
+        const payload = {
+          ticketId: formData.ticketId || `INC-${1000 + tasks.length}`,
+          projectId: formData.projectId!,
+          supportLevel: formData.supportLevel as SupportLevel,
+          priority: formData.priority as Priority,
+          generationDate: formData.generationDate,
+          responseDate: formData.responseDate,
+          closureDate: formData.closureDate || null,
+          status: formData.status as TaskStatus,
+          userIntimated: formData.userIntimated || false,
+          description: formData.description || '',
+          solution: formData.solution || '',
+          remarks: formData.remarks || '',
+          assignedTo: editingTask ? formData.assignedTo : currentUser,
+        };
 
-      if (response.ok) {
-        const savedTask = await response.json();
-        if (editingTask) {
-          setTasks(tasks.map(t => t.id === editingTask.id ? savedTask : t));
-          setEditingTask(null);
-        } else {
-          setTasks([savedTask, ...tasks]);
-        }
-        
-        // Reset form
-          setFormData({
-            ticketId: '',
-            projectId: PROJECTS_LIST[0] || '',
-            supportLevel: 'L1',
-            priority: 'P3',
-            status: 'Open',
-            generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-            responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-            closureDate: '',
-            userIntimated: false,
-            description: '',
-            solution: '',
-            remarks: '',
-            assignedTo: currentUser,
+        try {
+          const url = editingTask ? `${API_BASE}/${editingTask.id}` : API_BASE;
+          const method = editingTask ? 'PUT' : 'POST';
+          
+          const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
           });
+
+          if (response.ok) {
+            const savedTask = await response.json();
+            let updatedTasks = [...tasks];
+            if (editingTask) {
+              updatedTasks = tasks.map(t => t.id === editingTask.id ? savedTask : t);
+              setTasks(updatedTasks);
+              setEditingTask(null);
+            } else {
+              updatedTasks = [savedTask, ...tasks];
+              setTasks(updatedTasks);
+            }
+            
+            // Reset form
+            const firstProj = PROJECTS_LIST[0] || '';
+            setFormData({
+              ticketId: getNextTicketId(firstProj, updatedTasks),
+              projectId: firstProj,
+              supportLevel: 'L1',
+              priority: 'P3',
+              status: 'Open',
+              generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+              responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+              closureDate: '',
+              userIntimated: false,
+              description: '',
+              solution: '',
+              remarks: '',
+              assignedTo: currentUser,
+            });
+          }
+        } catch (error) {
+          console.error('Error saving task:', error);
+          alert('Could not connect to the Java backend. Please ensure the Spring Boot app is running on port 8080.');
+        }
       }
-    } catch (error) {
-      console.error('Error saving task:', error);
-      alert('Could not connect to the Java backend. Please ensure the Spring Boot app is running on port 8080.');
-    }
+    );
   };
 
   const handleDeleteTask = async (id: number) => {
@@ -591,6 +627,37 @@ export default function App() {
     onConfirm: () => {},
   });
 
+  const getNextTicketId = (projectId: string, currentTasks: SupportTask[]) => {
+    if (!projectId) return 'PENDING';
+    
+    // Generate prefix: First letters of words, or first 3 letters of name
+    const words = projectId.split(/[\s-_]+/);
+    let prefix = '';
+    if (words.length >= 2) {
+      prefix = words.map(w => w[0]).join('').toUpperCase().substring(0, 3);
+    } else {
+      prefix = projectId.substring(0, 3).toUpperCase();
+    }
+    
+    // Sanitize prefix
+    prefix = prefix.replace(/[^A-Z]/g, '');
+    if (prefix.length < 2) prefix = (prefix + 'INC').substring(0, 3);
+
+    // Filter tasks for this project
+    const projectTasks = currentTasks.filter(t => t.projectId === projectId);
+    
+    let maxNum = 1000;
+    projectTasks.forEach(t => {
+      const match = t.ticketId.match(/(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    });
+
+    return `${prefix}-${maxNum + 1}`;
+  };
+
   const askConfirmation = (title: string, message: string, onConfirm: () => void) => {
     setConfirmModal({
       isOpen: true,
@@ -605,9 +672,10 @@ export default function App() {
 
   const handleCancel = () => {
     setEditingTask(null);
+    const firstProj = PROJECTS_LIST[0] || '';
     setFormData({
-      ticketId: '',
-      projectId: PROJECTS_LIST[0] || '',
+      ticketId: getNextTicketId(firstProj, tasks),
+      projectId: firstProj,
       supportLevel: 'L1',
       priority: 'P3',
       status: 'Open',
@@ -751,9 +819,14 @@ export default function App() {
                     const newProjectId = e.target.value;
                     const config = projectConfigs.find(c => c.projectId === newProjectId);
                     const available = config?.employees || [];
+                    
+                    // Generate next ticket ID for this project
+                    const nextId = getNextTicketId(newProjectId, tasks);
+                    
                     setFormData({ 
                       ...formData, 
                       projectId: newProjectId,
+                      ticketId: nextId,
                       assignedTo: available.includes(formData.assignedTo || '') ? formData.assignedTo : (available[0] || 'Admin')
                     });
                   }}
@@ -763,7 +836,10 @@ export default function App() {
               </div>
 
               <div>
-                <label className="label-sm">Ticket ID</label>
+                <label className="label-sm flex items-center justify-between">
+                  <span>Ticket ID</span>
+                  <span className="text-[9px] text-blue-500 font-black uppercase tracking-widest bg-blue-500/5 px-1 rounded">Auto Sequence</span>
+                </label>
                 <input 
                   type="text" 
                   className="input-field" 
@@ -1851,84 +1927,49 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 2nd segment: Resource Mapping Details (Master User List) */}
+                {/* 2nd segment: Resource Mapping Details (Project wise) */}
                 <div className="chart-container overflow-hidden">
                   <div className="p-6 border-b border-slate-800/50 flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-black text-white uppercase tracking-widest">Resource Mapping Details</h3>
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Consolidated view of all active personnel across projects</p>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Consolidated view of all active personnel project wise</p>
                     </div>
                     <div className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] font-black text-blue-500 uppercase tracking-widest">
-                      Active Assets
+                      Project Allocation
                     </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="bg-slate-900/50 border-b border-slate-800">
                         <tr>
-                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Personnel Identity</th>
-                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Assigned Projects</th>
-                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Resource Status</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Project</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">User Name</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/30">
-                        {Array.from(new Set(projectConfigs.flatMap(c => c.employees))).map((user: string) => {
-                          const userProjects = projectConfigs.filter(c => c.employees.includes(user)).map(c => c.projectId);
-                          return (
-                            <tr key={user} className={cn(
-                              "hover:bg-slate-800/20 transition-colors",
-                              editingEmployee?.originalName === user && "bg-amber-500/5"
-                            )}>
-                              <td className="px-6 py-4">
-                                <div className="flex items-center gap-3">
-                                  <div className={cn(
-                                    "w-8 h-8 rounded-lg border flex items-center justify-center text-xs font-black transition-all",
-                                    editingEmployee?.originalName === user 
-                                      ? "bg-amber-500/10 border-amber-500/50 text-amber-500" 
-                                      : "bg-slate-900 border-slate-800 text-blue-400"
-                                  )}>
-                                    {user.charAt(0)}
-                                  </div>
-                                  <div className="flex flex-col">
-                                    <span className={cn(
-                                      "font-bold transition-colors",
-                                      editingEmployee?.originalName === user ? "text-amber-400" : "text-slate-200"
-                                    )}>
-                                      {user.split(' [')[0]}
+                        {projectConfigs.map((config) => (
+                          <tr key={config.projectId} className="hover:bg-slate-800/20 transition-colors">
+                            <td className="px-6 py-4">
+                              <span className="text-[11px] font-black text-blue-400 uppercase tracking-wider bg-blue-500/5 px-2 py-1 rounded border border-blue-500/10">
+                                {config.projectId}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-2">
+                                {(config.employees || []).map(emp => (
+                                  <div key={emp} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg border border-slate-700/50 shadow-sm">
+                                    <div className="w-5 h-5 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-[10px] font-black text-blue-400">
+                                      {emp.charAt(0)}
+                                    </div>
+                                    <span className="text-[11px] font-bold text-slate-200">
+                                      {emp}
                                     </span>
-                                    {user.includes('[') && (
-                                      <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                        {user.split('[')[1]?.replace(']', '')}
-                                      </span>
-                                    )}
                                   </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <div className="flex flex-wrap gap-2">
-                                  {userProjects.map(p => (
-                                    <span key={p} className="text-[9px] font-black text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded uppercase tracking-widest">
-                                      {p}
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <span className="flex items-center gap-2">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                  <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Allocated</span>
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {Array.from(new Set(projectConfigs.flatMap(c => c.employees))).length === 0 && (
-                          <tr>
-                            <td colSpan={3} className="px-6 py-12 text-center text-slate-600 italic text-xs font-mono uppercase tracking-widest opacity-50">
-                              No active personnel identified in inventory
+                                ))}
+                              </div>
                             </td>
                           </tr>
-                        )}
+                        ))}
                       </tbody>
                     </table>
                   </div>
