@@ -27,11 +27,21 @@ public class Project {
     @Column(columnDefinition = "TEXT")
     private String employees; // Comma separated list of employee names
 
+    private String shiftStart = "09:00";
+    private String shiftEnd = "18:00";
+    private String workingDays = "Mon,Tue,Wed,Thu,Fri";
+    @Column(columnDefinition = "TEXT")
+    private String holidays = "";
+
     public Project() {}
 
     public Project(String name) {
         this.name = name;
         this.employees = "John.D, Sarah.M, Admin, Support.Alpha"; // Default sample
+        this.shiftStart = "09:00";
+        this.shiftEnd = "18:00";
+        this.workingDays = "Mon,Tue,Wed,Thu,Fri";
+        this.holidays = "";
     }
 
     public Long getId() { return id; }
@@ -69,4 +79,16 @@ public class Project {
 
     public String getEmployees() { return employees; }
     public void setEmployees(String employees) { this.employees = employees; }
+
+    public String getShiftStart() { return shiftStart; }
+    public void setShiftStart(String shiftStart) { this.shiftStart = shiftStart; }
+
+    public String getShiftEnd() { return shiftEnd; }
+    public void setShiftEnd(String shiftEnd) { this.shiftEnd = shiftEnd; }
+
+    public String getWorkingDays() { return workingDays; }
+    public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
+
+    public String getHolidays() { return holidays; }
+    public void setHolidays(String holidays) { this.holidays = holidays; }
 }

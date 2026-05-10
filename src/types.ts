@@ -50,4 +50,8 @@ export interface ProjectConfig {
   slas: {
     [key in Priority]: SLAThresholds;
   };
+  shiftStart: string;
+  shiftEnd: string;
+  workingDays: string[];
+  holidays: string[];
 }

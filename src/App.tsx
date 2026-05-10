@@ -18,7 +18,7 @@ import {
   Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings,
   Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert
 } from 'lucide-react';
-import { format, subDays, differenceInMinutes, parseISO, startOfDay } from 'date-fns';
+import { format, subDays, differenceInMinutes, parseISO, startOfDay, addDays } from 'date-fns';
 import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig } from './types';
 import { cn, formatDuration, downloadCSV, exportToExcel } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -80,8 +80,53 @@ export default function App() {
     }
   };
 
+  const getBusinessMinutes = (startStr: string, endStr: string, config: ProjectConfig) => {
+    const start = parseISO(startStr);
+    const end = parseISO(endStr);
+    if (start > end) return 0;
+
+    const [sH, sM] = config.shiftStart.split(':').map(Number);
+    const [eH, eM] = config.shiftEnd.split(':').map(Number);
+    const shiftStartMinutes = sH * 60 + sM;
+    const shiftEndMinutes = eH * 60 + eM;
+
+    let totalMinutes = 0;
+    let current = startOfDay(start);
+    const lastDay = startOfDay(end);
+
+    while (current <= lastDay) {
+      const dayName = format(current, 'EEE'); 
+      const dateStr = format(current, 'yyyy-MM-dd');
+
+      if (config.workingDays.includes(dayName) && !config.holidays.includes(dateStr)) {
+        let dayEffStart = shiftStartMinutes;
+        let dayEffEnd = shiftEndMinutes;
+
+        if (current.getTime() === startOfDay(start).getTime()) {
+           dayEffStart = Math.max(shiftStartMinutes, start.getHours() * 60 + start.getMinutes());
+        }
+        if (current.getTime() === startOfDay(end).getTime()) {
+           dayEffEnd = Math.min(shiftEndMinutes, end.getHours() * 60 + end.getMinutes());
+        }
+
+        if (dayEffEnd > dayEffStart) {
+          totalMinutes += (dayEffEnd - dayEffStart);
+        }
+      }
+      current = addDays(current, 1);
+    }
+    return totalMinutes;
+  };
+
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details'>('analytics');
   const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
+  
+  // Shift & Strategy states
+  const [tempShiftStart, setTempShiftStart] = useState('09:00');
+  const [tempShiftEnd, setTempShiftEnd] = useState('18:00');
+  const [tempWorkingDays, setTempWorkingDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+  const [tempHolidays, setTempHolidays] = useState<string>('');
+
   const handleAddProject = async () => {
     if (!newProjectInput.trim() || projectsDB.find(p => p.name === newProjectInput)) return;
     
@@ -150,13 +195,20 @@ export default function App() {
     );
   };
 
-  const handleUpdateSla = async () => {
+  const handleSaveConfiguration = async () => {
     const project = projectsDB.find(p => p.name === configSelectedProject);
     if (!project) return;
+    
+    // Validate shift times (HH:MM)
+    const timeRegex = /^([01]\d|2[0-3]):?([0-5]\d)$/;
+    if (!timeRegex.test(tempShiftStart) || !timeRegex.test(tempShiftEnd)) {
+      alert('Invalid shift time format. Use HH:MM (24h)');
+      return;
+    }
 
     askConfirmation(
-      'Apply SLA Policy Changes',
-      `Updated service level benchmarks will be applied to project "${configSelectedProject}". System calculations will adapt immediately. Confirm?`,
+      'Apply System Configuration Strategy',
+      `Updated service level benchmarks and shift parameters will be applied to project "${configSelectedProject}". System calculations will adapt immediately. Confirm?`,
       async () => {
         const payload = {
           ...project,
@@ -168,6 +220,10 @@ export default function App() {
           p3ResolutionSla: tempProjectSlas.P3.resolution,
           p4ResponseSla: tempProjectSlas.P4.response,
           p4ResolutionSla: tempProjectSlas.P4.resolution,
+          shiftStart: tempShiftStart,
+          shiftEnd: tempShiftEnd,
+          workingDays: tempWorkingDays.join(','),
+          holidays: tempHolidays.split(',').map(h => h.trim()).filter(Boolean).join(','),
         };
 
         try {
@@ -180,7 +236,7 @@ export default function App() {
             await fetchProjects();
           }
         } catch (error) {
-          console.error('Error updating SLA:', error);
+          console.error('Error updating config:', error);
         }
       },
       'warning',
@@ -299,7 +355,11 @@ export default function App() {
           P2: { response: p.p2ResponseSla || 4, resolution: p.p2ResolutionSla || 8 },
           P3: { response: p.p3ResponseSla || 8, resolution: p.p3ResolutionSla || 24 },
           P4: { response: p.p4ResponseSla || 24, resolution: p.p4ResolutionSla || 48 },
-        }
+        },
+        shiftStart: p.shiftStart || '09:00',
+        shiftEnd: p.shiftEnd || '18:00',
+        workingDays: p.workingDays ? p.workingDays.split(',').map((d: string) => d.trim()) : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+        holidays: p.holidays ? p.holidays.split(',').map((h: string) => h.trim()).filter(Boolean) : [],
       })));
     }
   }, [projectsDB]);
@@ -311,11 +371,15 @@ export default function App() {
     P4: { response: 24, resolution: 48 },
   });
 
-  // Update temp SLA when config selected project changes
+  // Update temp states when config selected project changes
   useEffect(() => {
     const current = projectConfigs.find(c => c.projectId === configSelectedProject);
     if (current) {
       setTempProjectSlas(current.slas);
+      setTempShiftStart(current.shiftStart);
+      setTempShiftEnd(current.shiftEnd);
+      setTempWorkingDays(current.workingDays);
+      setTempHolidays(current.holidays.join(', '));
     }
   }, [configSelectedProject, projectConfigs]);
 
@@ -382,9 +446,17 @@ export default function App() {
     const currentTasks = projectFilteredTasks;
     const closedTasks = currentTasks.filter(t => t.closureDate && (t.status === 'Closed' || t.status === 'Resolved'));
     
-    const mttrResp = currentTasks.reduce((acc, t) => acc + differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate)), 0) / (currentTasks.length || 1);
+    const mttrResp = currentTasks.reduce((acc, t) => {
+      const config = projectConfigs.find(c => c.projectId === t.projectId);
+      const val = config ? getBusinessMinutes(t.generationDate, t.responseDate, config) : differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
+      return acc + val;
+    }, 0) / (currentTasks.length || 1);
     
-    const mttrReso = closedTasks.reduce((acc, t) => acc + differenceInMinutes(parseISO(t.closureDate!), parseISO(t.generationDate)), 0) / (closedTasks.length || 1);
+    const mttrReso = closedTasks.reduce((acc, t) => {
+      const config = projectConfigs.find(c => c.projectId === t.projectId);
+      const val = config ? getBusinessMinutes(t.generationDate, t.closureDate!, config) : differenceInMinutes(parseISO(t.closureDate!), parseISO(t.generationDate));
+      return acc + val;
+    }, 0) / (closedTasks.length || 1);
     
     const closedCount = currentTasks.filter(t => t.status === 'Closed').length;
     const intimatedCount = currentTasks.filter(t => t.status === 'Closed' && t.userIntimated).length;
@@ -397,7 +469,7 @@ export default function App() {
       total: currentTasks.length,
       active: currentTasks.filter(t => t.status !== 'Closed').length
     };
-  }, [projectFilteredTasks]);
+  }, [projectFilteredTasks, projectConfigs]);
 
   const currentConfig = projectConfigs.find(c => c.projectId === configSelectedProject);
   const configPIndex = projectConfigs.findIndex(c => c.projectId === configSelectedProject);
@@ -740,13 +812,17 @@ export default function App() {
       const config = projectConfigs.find(c => c.projectId === t.projectId);
       const slaThresholds = config?.slas?.[t.priority] || { response: 8, resolution: 24 };
       
-      const resolutionTime = t.closureDate ? differenceInMinutes(parseISO(t.closureDate), parseISO(t.generationDate)) : null;
+      const resolutionTime = (t.closureDate && config) ? getBusinessMinutes(t.generationDate, t.closureDate, config) : (t.closureDate ? differenceInMinutes(parseISO(t.closureDate), parseISO(t.generationDate)) : null);
       const slaLimit = slaThresholds.resolution * 60;
-      const resolutionSlaStatus = resolutionTime !== null ? (resolutionTime <= slaLimit ? 'MET' : 'BREACHED') : 'PENDING';
+      const resolutionSlaStatus = resolutionTime !== null ? (resolutionTime <= slaLimit ? 'MET' : 'NOT MET') : 'PENDING';
 
-      const responseTime = differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
+      const responseTime = config ? getBusinessMinutes(t.generationDate, t.responseDate, config) : differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
       const responseSlaLimit = slaThresholds.response * 60;
-      const responseSlaStatus = responseTime <= responseSlaLimit ? 'MET' : 'BREACHED';
+      const responseSlaStatus = responseTime <= responseSlaLimit ? 'MET' : 'NOT MET';
+
+      const agingMin = config 
+        ? getBusinessMinutes(t.generationDate, t.closureDate ? t.closureDate : new Date().toISOString(), config)
+        : differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate));
       
       return {
         'Ticket ID': t.ticketId,
@@ -763,7 +839,7 @@ export default function App() {
         'Resolution SLA Limit (Hrs)': slaThresholds.resolution,
         'Resolution Time (Min)': resolutionTime ?? '-',
         'Resolution SLA Status': resolutionSlaStatus,
-        'Aging (H:M)': `${Math.floor(differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate)) / 60)}:${(differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate)) % 60).toString().padStart(2, '0')}`,
+        'Aging (H:M)': `${Math.floor(Math.max(0, agingMin) / 60)}:${(Math.max(0, agingMin) % 60).toString().padStart(2, '0')}`,
         'Delay (Min)': (resolutionTime !== null && resolutionTime > slaLimit) ? resolutionTime - slaLimit : 0,
         'Description': t.description,
         'Resolution': t.solution,
@@ -1483,13 +1559,13 @@ export default function App() {
                           
                           // Resolution SLA
                           const slaLimitHrs = config?.slas?.[task.priority]?.resolution || 24;
-                          const resTimeMin = task.closureDate ? differenceInMinutes(parseISO(task.closureDate), parseISO(task.generationDate)) : null;
+                          const resTimeMin = (task.closureDate && config) ? getBusinessMinutes(task.generationDate, task.closureDate, config) : null;
                           const isBreached = resTimeMin !== null && resTimeMin > (slaLimitHrs * 60);
                           const delayMin = isBreached ? resTimeMin - (slaLimitHrs * 60) : 0;
 
                           // Response SLA
                           const responseSlaLimitHrs = config?.slas?.[task.priority]?.response || 2;
-                          const responseTimeMin = differenceInMinutes(parseISO(task.responseDate), parseISO(task.generationDate));
+                          const responseTimeMin = config ? getBusinessMinutes(task.generationDate, task.responseDate, config) : differenceInMinutes(parseISO(task.responseDate), parseISO(task.generationDate));
                           const isResponseBreached = responseTimeMin > (responseSlaLimitHrs * 60);
                           const responseDelayMin = isResponseBreached ? responseTimeMin - (responseSlaLimitHrs * 60) : 0;
                           const wasResponded = task.status !== 'Open' || task.responseDate !== task.generationDate;
@@ -1549,7 +1625,7 @@ export default function App() {
                                       "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
                                       isResponseBreached ? "bg-red-500/10 text-red-500 border border-red-500/20" : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                                     )}>
-                                      {isResponseBreached ? 'Breached' : 'Met'}
+                                      {isResponseBreached ? 'NOT MET' : 'MET'}
                                     </span>
                                     {isResponseBreached && (
                                       <span className="text-[10px] text-red-400 font-mono">
@@ -1568,7 +1644,7 @@ export default function App() {
                                       "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
                                       isBreached ? "bg-red-500/10 text-red-500 border border-red-500/20" : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                                     )}>
-                                      {isBreached ? 'Breached' : 'Met'}
+                                      {isBreached ? 'NOT MET' : 'MET'}
                                     </span>
                                     {isBreached && (
                                       <span className="text-[10px] text-red-400 font-mono">
@@ -1583,7 +1659,9 @@ export default function App() {
                               <td className="px-4 py-4 text-center">
                                 <span className="text-xs font-mono text-slate-300">
                                   {(() => {
-                                    const totalMin = differenceInMinutes(task.closureDate ? parseISO(task.closureDate) : new Date(), parseISO(task.generationDate));
+                                    const totalMin = config 
+                                      ? getBusinessMinutes(task.generationDate, task.closureDate ? task.closureDate : new Date().toISOString(), config)
+                                      : differenceInMinutes(task.closureDate ? parseISO(task.closureDate) : new Date(), parseISO(task.generationDate));
                                     const h = Math.floor(Math.max(0, totalMin) / 60);
                                     const m = Math.max(0, totalMin) % 60;
                                     return `${h}:${m.toString().padStart(2, '0')}`;
@@ -1721,7 +1799,7 @@ export default function App() {
                         <Trash2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
                       </button>
                       <button 
-                        onClick={handleUpdateSla}
+                        onClick={handleSaveConfiguration}
                         disabled={!currentConfig}
                         className="btn-primary flex items-center gap-2 px-8 py-3 shadow-xl shadow-blue-500/10 uppercase font-black tracking-widest text-[11px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
@@ -1916,6 +1994,104 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Segment 3: Configuration Strategy */}
+                <div className="chart-container p-8 border-l-4 border-l-blue-500/50">
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-blue-500/10 rounded-xl text-blue-500">
+                        <Settings className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white leading-tight uppercase tracking-tight">Configuration Strategy</h3>
+                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">Operational window and holiday calendar for {currentConfig?.projectId}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={handleSaveConfiguration}
+                      disabled={!currentConfig}
+                      className="btn-primary flex items-center gap-2 px-8 py-3 shadow-xl shadow-blue-500/10 uppercase font-black tracking-widest text-[11px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Sync Strategy
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                    {/* Shift Timing */}
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Clock className="w-4 h-4 text-blue-400" />
+                        <span className="text-[10px] font-black text-white uppercase tracking-widest">Shift Window (24H Format)</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">Start Time</label>
+                          <input 
+                            type="text" 
+                            placeholder="09:00"
+                            className="input-field h-12 px-5 text-sm font-mono focus:ring-blue-500/20 bg-slate-950/50" 
+                            value={tempShiftStart}
+                            onChange={(e) => setTempShiftStart(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">End Time</label>
+                          <input 
+                            type="text" 
+                            placeholder="18:00"
+                            className="input-field h-12 px-5 text-sm font-mono focus:ring-blue-500/20 bg-slate-950/50" 
+                            value={tempShiftEnd}
+                            onChange={(e) => setTempShiftEnd(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-xl">
+                        <p className="text-[10px] text-blue-300/70 font-medium italic">
+                          * Aging and SLA metrics will pause outside this window.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Working Days & Holidays */}
+                    <div className="space-y-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <ListTodo className="w-4 h-4 text-blue-400" />
+                          <span className="text-[10px] font-black text-white uppercase tracking-widest">Work Calendar Selection</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+                            <button
+                              key={day}
+                              onClick={() => setTempWorkingDays(prev => 
+                                prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+                              )}
+                              className={cn(
+                                "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border",
+                                tempWorkingDays.includes(day)
+                                  ? "bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20"
+                                  : "bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-700"
+                              )}
+                            >
+                              {day}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] uppercase font-black text-slate-500 tracking-widest block pl-1">Public Holidays (YYYY-MM-DD, Comma Separated)</label>
+                        <textarea 
+                          className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-white text-xs font-mono focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/50 outline-none transition-all h-24 placeholder:text-slate-800"
+                          placeholder="2024-01-01, 2024-12-25"
+                          value={tempHolidays}
+                          onChange={(e) => setTempHolidays(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -2024,6 +2200,62 @@ export default function App() {
                                   </div>
                                 ))}
                               </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 3rd segment: Configuration Strategy Details */}
+                <div className="chart-container overflow-hidden">
+                  <div className="p-6 border-b border-slate-800/50 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Configuration Strategy Details</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Working window and holiday schedules per project</p>
+                    </div>
+                    <div className="px-3 py-1 bg-violet-500/10 border border-violet-500/20 rounded text-[10px] font-black text-violet-500 uppercase tracking-widest">
+                      Shift Strategy
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-900/50 border-b border-slate-800">
+                        <tr>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Project</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Working Window</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Working Days</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Holidays</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/30">
+                        {projectConfigs.map((config) => (
+                          <tr key={config.projectId} className="hover:bg-slate-800/20 transition-colors">
+                            <td className="px-6 py-4">
+                              <span className="text-[11px] font-black text-blue-400 uppercase tracking-wider bg-blue-500/5 px-2 py-1 rounded border border-blue-500/10">
+                                {config.projectId}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                               <div className="flex items-center gap-2">
+                                  <Clock className="w-3 h-3 text-slate-500" />
+                                  <span className="text-[10px] font-mono text-slate-300">{config.shiftStart} - {config.shiftEnd}</span>
+                               </div>
+                            </td>
+                            <td className="px-6 py-4">
+                               <div className="flex flex-wrap gap-1">
+                                  {config.workingDays.map(d => (
+                                    <span key={d} className="px-1.5 py-0.5 bg-slate-800 rounded text-[8px] font-black text-slate-400 uppercase border border-slate-700">{d}</span>
+                                  ))}
+                               </div>
+                            </td>
+                            <td className="px-6 py-4">
+                               <div className="max-w-xs truncate">
+                                  <span className="text-[9px] text-slate-500 font-mono italic">
+                                    {config.holidays.length > 0 ? config.holidays.join(', ') : 'No holidays configured'}
+                                  </span>
+                               </div>
                             </td>
                           </tr>
                         ))}
