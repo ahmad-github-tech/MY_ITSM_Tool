@@ -16,7 +16,7 @@ import {
 import { 
   Activity, Clock, CheckCircle2, AlertCircle, Plus, 
   Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings,
-  Pencil, RotateCcw
+  Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert
 } from 'lucide-react';
 import { format, subDays, differenceInMinutes, parseISO, startOfDay } from 'date-fns';
 import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig } from './types';
@@ -114,7 +114,9 @@ export default function App() {
         } catch (error) {
           console.error('Error adding project:', error);
         }
-      }
+      },
+      'info',
+      'Initialize'
     );
   };
 
@@ -142,7 +144,9 @@ export default function App() {
         } catch (error) {
           console.error('Error deleting project:', error);
         }
-      }
+      },
+      'danger',
+      'Terminate'
     );
   };
 
@@ -174,12 +178,13 @@ export default function App() {
           });
           if (response.ok) {
             await fetchProjects();
-            alert('SLA settings updated successfully in Database');
           }
         } catch (error) {
           console.error('Error updating SLA:', error);
         }
-      }
+      },
+      'warning',
+      'Apply'
     );
   };
   const handlePersonnelMapping = async () => {
@@ -226,11 +231,13 @@ export default function App() {
         } catch (error) {
           console.error('Error updating personnel mapping:', error);
         }
-      }
+      },
+      'info',
+      editingEmployee ? 'Update' : 'Map'
     );
   };
 
-  const handleUnmapResource = async (emp: string) => {
+   const handleUnmapResource = async (emp: string) => {
     askConfirmation(
       'Unmap Resource',
       `Are you sure you want to remove "${emp}" from the selected project mappings?`,
@@ -249,14 +256,15 @@ export default function App() {
           }
           return Promise.resolve();
         });
-
         try {
           await Promise.all(updates);
           await fetchProjects();
         } catch (error) {
           console.error('Error unmapping resource:', error);
         }
-      }
+      },
+      'warning',
+      'Unmap'
     );
   };
   const [searchQuery, setSearchQuery] = useState('');
@@ -594,7 +602,9 @@ export default function App() {
           console.error('Error saving task:', error);
           alert('Could not connect to the Java backend. Please ensure the Spring Boot app is running on port 8080.');
         }
-      }
+      },
+      'info',
+      editingTask ? 'Update' : 'Save'
     );
   };
 
@@ -612,18 +622,22 @@ export default function App() {
       } catch (error) {
         console.error('Error deleting task:', error);
       }
-    });
+    }, 'danger', 'Delete');
   };
 
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
+    type: 'danger' | 'info' | 'warning';
+    confirmLabel: string;
     onConfirm: () => void | Promise<void>;
   }>({
     isOpen: false,
     title: '',
     message: '',
+    type: 'info',
+    confirmLabel: 'Confirm',
     onConfirm: () => {},
   });
 
@@ -658,11 +672,19 @@ export default function App() {
     return `${prefix}-${maxNum + 1}`;
   };
 
-  const askConfirmation = (title: string, message: string, onConfirm: () => void) => {
+  const askConfirmation = (
+    title: string, 
+    message: string, 
+    onConfirm: () => void, 
+    type: 'danger' | 'info' | 'warning' = 'info',
+    confirmLabel: string = 'Confirm'
+  ) => {
     setConfirmModal({
       isOpen: true,
       title,
       message,
+      type,
+      confirmLabel,
       onConfirm: async () => {
         await onConfirm();
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -720,7 +742,11 @@ export default function App() {
       
       const resolutionTime = t.closureDate ? differenceInMinutes(parseISO(t.closureDate), parseISO(t.generationDate)) : null;
       const slaLimit = slaThresholds.resolution * 60;
-      const slaStatus = resolutionTime !== null ? (resolutionTime <= slaLimit ? 'MET' : 'BREACHED') : 'PENDING';
+      const resolutionSlaStatus = resolutionTime !== null ? (resolutionTime <= slaLimit ? 'MET' : 'BREACHED') : 'PENDING';
+
+      const responseTime = differenceInMinutes(parseISO(t.responseDate), parseISO(t.generationDate));
+      const responseSlaLimit = slaThresholds.response * 60;
+      const responseSlaStatus = responseTime <= responseSlaLimit ? 'MET' : 'BREACHED';
       
       return {
         'Ticket ID': t.ticketId,
@@ -732,9 +758,12 @@ export default function App() {
         'Gen Date': format(parseISO(t.generationDate), 'yyyy-MM-dd HH:mm'),
         'Resp Date': format(parseISO(t.responseDate), 'yyyy-MM-dd HH:mm'),
         'Close Date': t.closureDate ? format(parseISO(t.closureDate), 'yyyy-MM-dd HH:mm') : '-',
-        'SLA Limit (Hrs)': slaThresholds.resolution,
+        'Response SLA Limit (Hrs)': slaThresholds.response,
+        'Response SLA Status': responseSlaStatus,
+        'Resolution SLA Limit (Hrs)': slaThresholds.resolution,
         'Resolution Time (Min)': resolutionTime ?? '-',
-        'SLA Status': slaStatus,
+        'Resolution SLA Status': resolutionSlaStatus,
+        'Aging (H:M)': `${Math.floor(differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate)) / 60)}:${(differenceInMinutes(t.closureDate ? parseISO(t.closureDate) : new Date(), parseISO(t.generationDate)) % 60).toString().padStart(2, '0')}`,
         'Delay (Min)': (resolutionTime !== null && resolutionTime > slaLimit) ? resolutionTime - slaLimit : 0,
         'Description': t.description,
         'Resolution': t.solution,
@@ -744,7 +773,7 @@ export default function App() {
 
     // 2. Analytics Sheet (KPIs)
     const closedTasks = currentTasks.filter(t => t.closureDate);
-    const metCount = ticketData.filter(t => t['SLA Status'] === 'MET').length;
+    const metCount = ticketData.filter(t => t['Resolution SLA Status'] === 'MET').length;
     const slaRate = closedTasks.length > 0 ? (metCount / closedTasks.length) * 100 : 0;
 
     const analyticsData = [
@@ -1442,17 +1471,28 @@ export default function App() {
                            <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Resolution Date</th>
                            <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Resolution Description</th>
                            <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Remarks</th>
-                          <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500 text-center">SLA Status</th>
+                           <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500 text-center">Response SLA Status</th>
+                          <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500 text-center">Resolution SLA Status</th>
+                          <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500 text-center">Aging</th>
                           <th className="px-4 py-3 font-bold text-[10px] uppercase tracking-wider text-slate-500 text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/50">
                         {filteredTasks.map(task => {
                           const config = projectConfigs.find(c => c.projectId === task.projectId);
+                          
+                          // Resolution SLA
                           const slaLimitHrs = config?.slas?.[task.priority]?.resolution || 24;
                           const resTimeMin = task.closureDate ? differenceInMinutes(parseISO(task.closureDate), parseISO(task.generationDate)) : null;
                           const isBreached = resTimeMin !== null && resTimeMin > (slaLimitHrs * 60);
                           const delayMin = isBreached ? resTimeMin - (slaLimitHrs * 60) : 0;
+
+                          // Response SLA
+                          const responseSlaLimitHrs = config?.slas?.[task.priority]?.response || 2;
+                          const responseTimeMin = differenceInMinutes(parseISO(task.responseDate), parseISO(task.generationDate));
+                          const isResponseBreached = responseTimeMin > (responseSlaLimitHrs * 60);
+                          const responseDelayMin = isResponseBreached ? responseTimeMin - (responseSlaLimitHrs * 60) : 0;
+                          const wasResponded = task.status !== 'Open' || task.responseDate !== task.generationDate;
 
                           return (
                             <tr key={task.id} className="hover:bg-slate-800/20 transition-colors group">
@@ -1503,6 +1543,25 @@ export default function App() {
                                 </div>
                               </td>
                               <td className="px-4 py-4 text-center">
+                                {wasResponded ? (
+                                  <div className="flex flex-col items-center gap-1">
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
+                                      isResponseBreached ? "bg-red-500/10 text-red-500 border border-red-500/20" : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                                    )}>
+                                      {isResponseBreached ? 'Breached' : 'Met'}
+                                    </span>
+                                    {isResponseBreached && (
+                                      <span className="text-[10px] text-red-400 font-mono">
+                                        +{formatDuration(responseDelayMin * 60000)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest opacity-50">Pending</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-4 text-center">
                                 {task.closureDate ? (
                                   <div className="flex flex-col items-center gap-1">
                                     <span className={cn(
@@ -1520,6 +1579,16 @@ export default function App() {
                                 ) : (
                                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest opacity-50">Active</span>
                                 )}
+                              </td>
+                              <td className="px-4 py-4 text-center">
+                                <span className="text-xs font-mono text-slate-300">
+                                  {(() => {
+                                    const totalMin = differenceInMinutes(task.closureDate ? parseISO(task.closureDate) : new Date(), parseISO(task.generationDate));
+                                    const h = Math.floor(Math.max(0, totalMin) / 60);
+                                    const m = Math.max(0, totalMin) % 60;
+                                    return `${h}:${m.toString().padStart(2, '0')}`;
+                                  })()}
+                                </span>
                               </td>
                               <td className="px-4 py-4 text-right">
                                 <div className="flex items-center justify-end gap-2">
@@ -1640,7 +1709,9 @@ export default function App() {
                                 timestamp: new Date().toISOString(),
                                 user: currentUser
                               }, ...prev]);
-                            }
+                            },
+                            'danger',
+                            'Reset'
                           );
                         }}
                         disabled={!currentConfig}
@@ -1974,8 +2045,15 @@ export default function App() {
                   className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6"
                 >
                   <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-red-500/10 rounded-xl text-red-500">
-                      <Trash2 className="w-6 h-6" />
+                    <div className={cn(
+                      "p-3 rounded-xl",
+                      confirmModal.type === 'danger' ? "bg-red-500/10 text-red-500" :
+                      confirmModal.type === 'warning' ? "bg-amber-500/10 text-amber-500" :
+                      "bg-blue-500/10 text-blue-500"
+                    )}>
+                      {confirmModal.type === 'danger' ? <Trash2 className="w-6 h-6" /> :
+                       confirmModal.type === 'warning' ? <AlertTriangle className="w-6 h-6" /> :
+                       <Info className="w-6 h-6" />}
                     </div>
                     <div>
                       <h3 className="text-sm font-black text-white uppercase tracking-widest">{confirmModal.title}</h3>
@@ -1992,9 +2070,14 @@ export default function App() {
                     </button>
                     <button 
                       onClick={confirmModal.onConfirm}
-                      className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-red-500/20"
+                      className={cn(
+                        "flex-1 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg",
+                        confirmModal.type === 'danger' ? "bg-red-600 hover:bg-red-500 text-white shadow-red-500/20" :
+                        confirmModal.type === 'warning' ? "bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20" :
+                        "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20"
+                      )}
                     >
-                      Delete
+                      {confirmModal.confirmLabel}
                     </button>
                   </div>
                 </motion.div>
