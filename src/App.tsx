@@ -19,10 +19,11 @@ import {
   Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert, UserPlus, Users, Key,
   History, Eye, Scale, Terminal, Calendar, ChevronDown, FileSpreadsheet, FileText
 } from 'lucide-react';
-import { format, subDays, differenceInMinutes, parseISO, startOfDay, addDays } from 'date-fns';
+import { format, subDays, differenceInMinutes, parseISO, startOfDay, endOfDay, addDays } from 'date-fns';
 import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig, AppUser } from './types';
 import { cn, formatDuration, downloadCSV, exportToExcel, exportToPDF } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import html2canvas from 'html2canvas';
 
 // --- Constants ---
 const ISSUE_TEMPLATES = [
@@ -41,17 +42,18 @@ const ISSUE_TEMPLATES = [
 // --- API Utils ---
 const API_BASE = 'http://localhost:8080/supportflow/api/tasks';
 const API_PROJECTS = 'http://localhost:8080/supportflow/api/projects';
+const API_USERS = 'http://localhost:8080/supportflow/api/users';
 
 export default function App() {
   const [tasks, setTasks] = useState<SupportTask[]>([]);
   const [projectsDB, setProjectsDB] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch tasks and projects on mount
+  // Fetch tasks, projects and users on mount
   useEffect(() => {
     const initFetch = async () => {
       setLoading(true);
-      await Promise.all([fetchTasks(), fetchProjects()]);
+      await Promise.all([fetchTasks(), fetchProjects(), fetchUsers()]);
       setLoading(false);
     };
     initFetch();
@@ -78,6 +80,20 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error connecting to backend (projects):', error);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch(API_USERS);
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.length > 0) {
+          setUsers(data);
+        }
+      }
+    } catch (error) {
+      console.error('Error connecting to backend (users):', error);
     }
   };
 
@@ -139,7 +155,9 @@ export default function App() {
   };
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details' | 'user-onboard'>('analytics');
-  const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly' | 'semi-annual' | 'three-quarter' | 'yearly'>('quarterly');
+  const [trendPeriod, setTrendPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly' | 'custom'>('daily');
+  const [customStartDate, setCustomStartDate] = useState<string>(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
+  const [customEndDate, setCustomEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   
   // User Onboard State
   const [users, setUsers] = useState<AppUser[]>([
@@ -163,7 +181,7 @@ export default function App() {
     askConfirmation(
       'Onboard New User',
       `This will create access for "${userFormData.name}" (${userFormData.id}) as ${userFormData.role}. Continue?`,
-      () => {
+      async () => {
         const newUser: AppUser = {
           id: userFormData.id!,
           name: userFormData.name!,
@@ -172,22 +190,54 @@ export default function App() {
           role: userFormData.role || 'Standard User'
         };
         
-        setUsers(prev => [...prev, newUser]);
-        setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+        try {
+          const response = await fetch(API_USERS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newUser)
+          });
+          if (response.ok) {
+            await fetchUsers();
+            setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+          } else {
+            // If API fails, still update local UI for demo purposes but log error
+            console.error("Failed to persist user to DB");
+            setUsers(prev => [...prev, newUser]);
+            setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+          }
+        } catch (error) {
+          console.error("Error adding user:", error);
+          setUsers(prev => [...prev, newUser]);
+          setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+        }
       },
       'info',
       'Onboard'
     );
   };
 
-  const handleToggleUserStatus = (userId: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        const nextStatus = u.status === 'Active' ? 'Deactivate' : 'Active';
-        return { ...u, status: nextStatus };
+  const handleToggleUserStatus = async (userId: string) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    
+    const updatedStatus = user.status === 'Active' ? 'Deactivate' : 'Active';
+    const updatedUser = { ...user, status: updatedStatus };
+
+    try {
+      const response = await fetch(`${API_USERS}/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedUser)
+      });
+      if (response.ok) {
+        await fetchUsers();
+      } else {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: updatedStatus as any } : u));
       }
-      return u;
-    }));
+    } catch (error) {
+      console.error("Error toggling user status:", error);
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: updatedStatus as any } : u));
+    }
   };
 
   const handleDeleteUser = (userId: string) => {
@@ -195,8 +245,18 @@ export default function App() {
     askConfirmation(
       'Offboard User',
       `Permanently remove access for user ID "${userId}"? This action cannot be undone.`,
-      () => {
-        setUsers(prev => prev.filter(u => u.id !== userId));
+      async () => {
+        try {
+          const response = await fetch(`${API_USERS}/${userId}`, { method: 'DELETE' });
+          if (response.ok) {
+            await fetchUsers();
+          } else {
+            setUsers(prev => prev.filter(u => u.id !== userId));
+          }
+        } catch (error) {
+          console.error("Error deleting user:", error);
+          setUsers(prev => prev.filter(u => u.id !== userId));
+        }
       },
       'danger',
       'Delete'
@@ -611,21 +671,32 @@ export default function App() {
 
     // Filter tasks based on trendPeriod for Distribution charts
     const now = new Date();
-    const periodStart = trendPeriod === 'weekly' 
-      ? subDays(now, 7) 
-      : trendPeriod === 'monthly' 
-        ? subDays(now, 30) 
-        : trendPeriod === 'quarterly'
-          ? subDays(now, 91)
-          : trendPeriod === 'semi-annual'
-            ? subDays(now, 182)
-            : trendPeriod === 'three-quarter'
-              ? subDays(now, 273)
-              : subDays(now, 365);
+    let periodStart: Date;
+    let periodEnd = now;
+
+    if (trendPeriod === 'daily') {
+      periodStart = startOfDay(now);
+    } else if (trendPeriod === 'weekly') {
+      periodStart = subDays(now, 7);
+    } else if (trendPeriod === 'monthly') {
+      periodStart = subDays(now, 30);
+    } else if (trendPeriod === 'quarterly') {
+      periodStart = subDays(now, 91);
+    } else {
+      const s = parseISO(customStartDate);
+      const e = parseISO(customEndDate);
+      if (isNaN(s.getTime()) || isNaN(e.getTime())) {
+        periodStart = new Date(0);
+        periodEnd = new Date(0);
+      } else {
+        periodStart = startOfDay(s);
+        periodEnd = endOfDay(e);
+      }
+    }
 
     const distributionTasks = currentTasks.filter(t => {
       const genDate = parseISO(t.generationDate);
-      return genDate >= periodStart;
+      return genDate >= periodStart && genDate <= periodEnd;
     });
 
     // Priority Pie
@@ -687,7 +758,22 @@ export default function App() {
     // Trend Line calculation based on trendPeriod
     let trendData: { name: string; closures: number; date: number }[] = [];
 
-    if (trendPeriod === 'weekly') {
+    if (trendPeriod === 'daily') {
+      trendData = Array.from({ length: 24 }).map((_, i) => {
+        const hour = i;
+        const formatted = `${hour}:00`;
+        const hourStart = startOfDay(now).getTime() + (hour * 3600000);
+        const hourEnd = hourStart + 3600000;
+        
+        const closures = currentTasks.filter(t => {
+          if (!t.closureDate) return false;
+          const cTime = parseISO(t.closureDate).getTime();
+          return cTime >= hourStart && cTime < hourEnd;
+        }).length;
+
+        return { name: formatted, closures, date: hourStart };
+      });
+    } else if (trendPeriod === 'weekly') {
       trendData = Array.from({ length: 7 }).map((_, i) => {
         const date = subDays(now, i);
         const formatted = format(date, 'MMM dd');
@@ -733,27 +819,56 @@ export default function App() {
 
         return { name: formatted, closures, date: weekStart };
       }).reverse();
-    } else {
-      // Semi-Annual, Three-Quarter, Yearly: Group by month
-      const months = trendPeriod === 'semi-annual' ? 6 : trendPeriod === 'three-quarter' ? 9 : 12;
-      trendData = Array.from({ length: months }).map((_, i) => {
-        const date = subDays(now, i * 30); // approx monthly slots
-        const formatted = format(date, 'MMM yy');
-        const monthStart = startOfDay(date).getTime() - (29 * 86400000);
-        const monthEnd = startOfDay(date).getTime() + 86400000;
+    } else if (trendPeriod === 'custom') {
+      const sDate = parseISO(customStartDate);
+      const eDate = parseISO(customEndDate);
+      
+      if (isNaN(sDate.getTime()) || isNaN(eDate.getTime())) {
+        trendData = [];
+      } else {
+        const start = startOfDay(sDate);
+        const end = endOfDay(eDate);
+        const diffMs = end.getTime() - start.getTime();
+        const diffDays = diffMs >= 0 ? Math.round(diffMs / (24 * 60 * 60 * 1000)) : 0;
         
-        const closures = currentTasks.filter(t => {
-          if (!t.closureDate) return false;
-          const cTime = parseISO(t.closureDate).getTime();
-          return cTime >= monthStart && cTime < monthEnd;
-        }).length;
+        if (diffDays <= 0) {
+          trendData = [];
+        } else if (diffDays <= 60) {
+          trendData = Array.from({ length: Math.min(diffDays, 100) }).map((_, i) => {
+            const date = subDays(end, i);
+            const formatted = format(date, 'MMM dd');
+            const dayStart = startOfDay(date).getTime();
+            const dayEnd = dayStart + 86400000;
+            
+            const closures = currentTasks.filter(t => {
+              if (!t.closureDate) return false;
+              const cTime = parseISO(t.closureDate).getTime();
+              return cTime >= dayStart && cTime < dayEnd;
+            }).length;
 
-        return { name: formatted, closures, date: monthStart };
-      }).reverse();
+            return { name: formatted, closures, date: dayStart };
+          }).reverse();
+        } else {
+          trendData = Array.from({ length: Math.min(Math.ceil(diffDays / 7), 52) }).map((_, i) => {
+            const date = subDays(end, i * 7);
+            const weekStart = startOfDay(date).getTime() - (6 * 86400000);
+            const weekEnd = startOfDay(date).getTime() + 86400000;
+            const formatted = `Wk ${format(date, 'ww')}`;
+            
+            const closures = currentTasks.filter(t => {
+              if (!t.closureDate) return false;
+              const cTime = parseISO(t.closureDate).getTime();
+              return cTime >= weekStart && cTime < weekEnd;
+            }).length;
+
+            return { name: formatted, closures, date: weekStart };
+          }).reverse();
+        }
+      }
     }
 
     return { priorityData, levelData, topIssues, agingData, consumptionData, trendData };
-  }, [projectFilteredTasks, trendPeriod]);
+  }, [projectFilteredTasks, trendPeriod, customStartDate, customEndDate]);
 
   // --- Handlers ---
   const handleSaveTask = async (e: React.FormEvent) => {
@@ -986,7 +1101,7 @@ export default function App() {
     setIsSidebarOpen(true);
   };
 
-  const handleExport = (formatType: 'excel' | 'pdf') => {
+  const handleExport = async (formatType: 'excel' | 'pdf') => {
     setIsExportDropdownOpen(false);
     const currentTasks = projectFilteredTasks;
     
@@ -1050,7 +1165,50 @@ export default function App() {
     if (formatType === 'excel') {
       exportToExcel(sheets, `${filenamePrefix}.xlsx`);
     } else {
-      exportToPDF(sheets, `${filenamePrefix}.pdf`);
+      // Ensure we are on analytics tab to capture charts
+      const originalTab = activeTab;
+      if (activeTab !== 'analytics') {
+        setActiveTab('analytics');
+        // Wait for tab to switch and charts to mount
+        await new Promise(resolve => setTimeout(resolve, 800));
+      }
+
+      // Capture charts if in analytics tab
+      let chartImages: string[] = [];
+      const chartElements = document.querySelectorAll('.report-chart');
+      
+      if (chartElements.length > 0) {
+        setLoading(true);
+        try {
+          const captures = Array.from(chartElements).map(el => 
+            html2canvas(el as HTMLElement, {
+              backgroundColor: '#0f172a',
+              logging: false,
+              scale: 2,
+              useCORS: true,
+              allowTaint: true
+            }).then(canvas => canvas.toDataURL('image/png'))
+          );
+          chartImages = await Promise.all(captures);
+        } catch (error) {
+          console.error('Error capturing charts:', error);
+        }
+        setLoading(false);
+      }
+
+      // Revert to original tab if needed
+      if (originalTab !== 'analytics') {
+        setActiveTab(originalTab);
+      }
+
+      let dateRangeStr = '';
+      if (trendPeriod === 'custom') {
+        dateRangeStr = `${format(parseISO(customStartDate), 'MMM dd, yyyy')} to ${format(parseISO(customEndDate), 'MMM dd, yyyy')}`;
+      } else {
+        dateRangeStr = trendPeriod.charAt(0).toUpperCase() + trendPeriod.slice(1);
+      }
+
+      exportToPDF(sheets, `${filenamePrefix}.pdf`, chartImages, dateRangeStr);
     }
   };
 
@@ -1071,7 +1229,7 @@ export default function App() {
         <div className="p-6 flex flex-col h-full overflow-y-auto custom-scrollbar">
           <div className="flex items-center gap-2 mb-8 p-1 border-b border-slate-800 pb-6">
             <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-            <h1 className="font-bold text-xl tracking-tight">Ticket Entry</h1>
+            <h1 className="font-bold text-xl tracking-tight">ITSM Tool</h1>
           </div>
 
           <form onSubmit={handleSaveTask} className="space-y-6">
@@ -1466,45 +1624,85 @@ export default function App() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+                className="space-y-4"
               >
-                <div className="lg:col-span-2 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-900/40 p-5 rounded-3xl border border-slate-800/50 mb-2">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-blue-500/10 rounded-2xl">
-                      <Clock className="w-6 h-6 text-blue-500" />
+                {/* Global Timeframe Intelligence Header */}
+                <div className="bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+                  <div className="px-6 py-5 border-b border-slate-800 bg-slate-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                        <Clock className="w-5 h-5 text-blue-500" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-wider mb-0.5">Timeframe Intelligence</h3>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Dynamic report window selection for all analytics</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-white font-black text-sm uppercase tracking-widest">Timeframe Intelligence</h3>
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Dynamic report window selection for all analytics</p>
+                    
+                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1.5 rounded-xl shadow-inner overflow-x-auto">
+                      {(['daily', 'weekly', 'monthly', 'quarterly', 'custom'] as const).map((period) => (
+                        <button
+                          key={period}
+                          onClick={() => setTrendPeriod(period)}
+                          className={cn(
+                            "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all duration-300 whitespace-nowrap",
+                            trendPeriod === period 
+                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30 -translate-y-0.5" 
+                              : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
+                          )}
+                        >
+                          {period}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="relative group min-w-[200px]">
-                    <select
-                      value={trendPeriod}
-                      onChange={(e) => setTrendPeriod(e.target.value as any)}
-                      className="appearance-none w-full bg-slate-800 border border-slate-700 text-white text-[10px] font-black uppercase tracking-widest pl-10 pr-10 py-3 rounded-xl cursor-not-allowed group-hover:cursor-pointer hover:bg-slate-750 hover:border-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <option value="weekly">Weekly View</option>
-                      <option value="monthly">Monthly View</option>
-                      <option value="quarterly">Quarterly View</option>
-                      <option value="semi-annual">Semi-Annual View</option>
-                      <option value="three-quarter">Three-Quarter View</option>
-                      <option value="yearly">Yearly View</option>
-                    </select>
-                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
-                       <Calendar className="w-4 h-4 text-blue-500" />
-                    </div>
-                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
-                       <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
-                    </div>
-                  </div>
-                </div>
 
-                <div className="chart-container p-6 h-[400px]">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="label-sm mb-0">Ticket Trends</h3>
-                  </div>
+                  {trendPeriod === 'custom' && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="px-6 py-4 bg-slate-900/20 flex flex-wrap items-center gap-6 border-t border-slate-800/50"
+                    >
+                      <div className="flex items-center gap-3">
+                         <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">From</label>
+                         <input 
+                            type="date" 
+                            className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all font-mono"
+                            value={customStartDate}
+                            onChange={e => setCustomStartDate(e.target.value)}
+                         />
+                      </div>
+                      <div className="hidden md:block w-[1px] h-8 bg-slate-800" />
+                      <div className="flex items-center gap-3">
+                         <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">To</label>
+                         <input 
+                            type="date" 
+                            className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all font-mono"
+                            value={customEndDate}
+                            onChange={e => setCustomEndDate(e.target.value)}
+                         />
+                      </div>
+                      <div className="flex-grow" />
+                      <div className="flex flex-col items-end">
+                        <span className="text-[9px] text-slate-500 uppercase font-bold tracking-tighter">Selected Range</span>
+                        <span className="text-[11px] text-blue-400 font-black">
+                          {(() => {
+                            const s = parseISO(customStartDate);
+                            const e = parseISO(customEndDate);
+                            if (isNaN(s.getTime()) || isNaN(e.getTime())) return 'Select valid range';
+                            return `${format(s, 'MMM dd')} - ${format(e, 'MMM dd, yyyy')}`;
+                          })()}
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="chart-container report-chart p-6 h-[400px]">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Ticket Trends</h3>
+                    </div>
                   <ResponsiveContainer width="100%" height="85%">
                     <LineChart data={charts.trendData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
@@ -1520,9 +1718,9 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
-                  <div className="chart-container p-5 h-[400px] flex flex-col">
+                  <div className="chart-container report-chart p-5 h-[400px] flex flex-col">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="label-sm mb-0">Priority Distribution</h3>
+                      <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Priority Distribution</h3>
                     </div>
                     <div className="flex flex-grow items-center justify-around">
                       <div className="w-32 h-32 relative">
@@ -1560,9 +1758,9 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="chart-container p-6">
+                <div className="chart-container report-chart p-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="label-sm mb-0">Workload Distribution (L1-L4)</h3>
+                    <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Workload Distribution (L1-L4)</h3>
                   </div>
                   <div className="space-y-4">
                     {charts.levelData.map(level => {
@@ -1585,9 +1783,9 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="chart-container p-6">
+                <div className="chart-container report-chart p-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="label-sm mb-0">Consumed Hours by Tier</h3>
+                    <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Consumed Hours by Tier</h3>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1617,9 +1815,9 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="chart-container p-6">
+                <div className="chart-container report-chart p-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="label-sm mb-0">Top 5 Issues</h3>
+                    <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Top 5 Issues</h3>
                   </div>
                   <div className="space-y-4">
                     {charts.topIssues.map((issue, idx) => (
@@ -1640,9 +1838,9 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="chart-container p-6">
+                <div className="chart-container report-chart p-6">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="label-sm mb-0">Aging of Open Tickets</h3>
+                    <h3 className="label-sm mb-0 uppercase tracking-widest text-slate-400">Aging of Open Tickets</h3>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1672,6 +1870,7 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+                </div>
                 </div>
               </motion.div>
             ) : activeTab === 'workbook' ? (

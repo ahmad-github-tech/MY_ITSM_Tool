@@ -31,12 +31,44 @@ export function exportToExcel(sheets: { name: string; data: any[] }[], filename:
   XLSX.writeFile(wb, filename);
 }
 
-export function exportToPDF(sheets: { name: string; data: any[] }[], filename: string) {
+export function exportToPDF(sheets: { name: string; data: any[] }[], filename: string, chartImages: string[] = [], dateRange?: string) {
   const doc = new jsPDF('landscape');
   const now = format(new Date(), 'MMM dd, yyyy HH:mm');
   
+  // Add Chart Images if present
+  if (chartImages.length > 0) {
+    chartImages.forEach((img, idx) => {
+      if (idx > 0 && idx % 2 === 0) doc.addPage();
+      
+      const xPos = idx % 2 === 0 ? 14 : 154;
+      const yPos = 30;
+      
+      // Header for Chart Page
+      if (idx % 2 === 0) {
+        doc.setFontSize(18);
+        doc.setTextColor(15, 23, 42);
+        doc.text('IT Support Visual Analytics', 14, 15);
+        if (dateRange) {
+          doc.setFontSize(10);
+          doc.setTextColor(51, 65, 85);
+          doc.text(`Period: ${dateRange}`, 14, 22);
+        }
+        doc.setFontSize(10);
+        doc.setTextColor(100, 116, 139);
+        doc.text(`Generated: ${now}`, 283, 22, { align: 'right' });
+      }
+
+      try {
+        doc.addImage(img, 'PNG', xPos, yPos, 130, 80);
+      } catch (e) {
+        console.error('Error adding image to PDF:', e);
+      }
+    });
+    doc.addPage();
+  }
+
   sheets.forEach((sheet, index) => {
-    if (index > 0) doc.addPage();
+    if (index > 0 || (index === 0 && chartImages.length > 0)) doc.addPage();
     
     // Header
     doc.setFontSize(18);
@@ -45,7 +77,7 @@ export function exportToPDF(sheets: { name: string; data: any[] }[], filename: s
     
     doc.setFontSize(10);
     doc.setTextColor(100, 116, 139); // slate-500
-    doc.text(`Sheet: ${sheet.name}`, 14, 22);
+    doc.text(`Sheet: ${sheet.name}${dateRange ? ` | Period: ${dateRange}` : ''}`, 14, 22);
     doc.text(`Generated: ${now}`, 283, 22, { align: 'right' });
     
     if (sheet.data.length > 0) {
