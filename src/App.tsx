@@ -39,8 +39,8 @@ const ISSUE_TEMPLATES = [
 ];
 
 // --- API Utils ---
-const API_BASE = '/supportflow/api/tasks';
-const API_PROJECTS = '/supportflow/api/projects';
+const API_BASE = 'http://localhost:8080/supportflow/api/tasks';
+const API_PROJECTS = 'http://localhost:8080/supportflow/api/projects';
 
 export default function App() {
   const [tasks, setTasks] = useState<SupportTask[]>([]);
@@ -139,11 +139,7 @@ export default function App() {
   };
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details' | 'user-onboard'>('analytics');
-  const [trendPeriod, setTrendPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semi-annual' | 'three-quarter' | 'yearly' | 'custom'>('daily');
-  const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string }>({
-    start: format(subDays(new Date(), 7), "yyyy-MM-dd"),
-    end: format(new Date(), "yyyy-MM-dd")
-  });
+  const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly' | 'semi-annual' | 'three-quarter' | 'yearly'>('quarterly');
   
   // User Onboard State
   const [users, setUsers] = useState<AppUser[]>([
@@ -615,33 +611,21 @@ export default function App() {
 
     // Filter tasks based on trendPeriod for Distribution charts
     const now = new Date();
-    let periodStart: Date;
-    let periodEnd = now;
-
-    if (trendPeriod === 'custom') {
-      periodStart = parseISO(customDateRange.start);
-      periodEnd = parseISO(customDateRange.end);
-      // Ensure end of day for the end date
-      periodEnd.setHours(23, 59, 59, 999);
-    } else {
-      periodStart = trendPeriod === 'daily'
-        ? startOfDay(now)
-        : trendPeriod === 'weekly' 
-          ? subDays(now, 7) 
-          : trendPeriod === 'monthly' 
-            ? subDays(now, 30) 
-            : trendPeriod === 'quarterly'
-              ? subDays(now, 91)
-              : trendPeriod === 'semi-annual'
-                ? subDays(now, 182)
-                : trendPeriod === 'three-quarter'
-                  ? subDays(now, 273)
-                  : subDays(now, 365);
-    }
+    const periodStart = trendPeriod === 'weekly' 
+      ? subDays(now, 7) 
+      : trendPeriod === 'monthly' 
+        ? subDays(now, 30) 
+        : trendPeriod === 'quarterly'
+          ? subDays(now, 91)
+          : trendPeriod === 'semi-annual'
+            ? subDays(now, 182)
+            : trendPeriod === 'three-quarter'
+              ? subDays(now, 273)
+              : subDays(now, 365);
 
     const distributionTasks = currentTasks.filter(t => {
       const genDate = parseISO(t.generationDate);
-      return genDate >= periodStart && genDate <= periodEnd;
+      return genDate >= periodStart;
     });
 
     // Priority Pie
@@ -703,28 +687,9 @@ export default function App() {
     // Trend Line calculation based on trendPeriod
     let trendData: { name: string; closures: number; date: number }[] = [];
 
-    if (trendPeriod === 'daily' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 1.1)) {
-      // Group by hours for daily or very short custom range
-      trendData = Array.from({ length: 24 }).map((_, i) => {
-        const date = new Date(periodStart);
-        date.setHours(i, 0, 0, 0);
-        const formatted = format(date, 'HH:mm');
-        const hourStart = date.getTime();
-        const hourEnd = hourStart + 3600000;
-
-        const closures = currentTasks.filter(t => {
-          if (!t.closureDate) return false;
-          const cTime = parseISO(t.closureDate).getTime();
-          return cTime >= hourStart && cTime < hourEnd;
-        }).length;
-
-        return { name: formatted, closures, date: hourStart };
-      });
-    } else if (trendPeriod === 'weekly' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 14)) {
-      // Group by day for weekly or short custom range
-      const daysCount = trendPeriod === 'custom' ? Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / 1440)) : 7;
-      trendData = Array.from({ length: daysCount }).map((_, i) => {
-        const date = subDays(periodEnd, i);
+    if (trendPeriod === 'weekly') {
+      trendData = Array.from({ length: 7 }).map((_, i) => {
+        const date = subDays(now, i);
         const formatted = format(date, 'MMM dd');
         const dayStart = startOfDay(date).getTime();
         const dayEnd = dayStart + 86400000;
@@ -737,13 +702,27 @@ export default function App() {
 
         return { name: formatted, closures, date: dayStart };
       }).reverse();
-    } else if (trendPeriod === 'monthly' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 45)) {
-      // Group by week for monthly or mid-range custom
-      const weeksCount = trendPeriod === 'custom' ? Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / (1440 * 7))) : 4;
-      trendData = Array.from({ length: weeksCount }).map((_, i) => {
-        const date = subDays(periodEnd, i * 7);
-        const formatted = `Wk ${format(date, 'w')}`;
-        const weekStart = startOfDay(date).getTime() - (6 * 86400000); 
+    } else if (trendPeriod === 'monthly') {
+      trendData = Array.from({ length: 30 }).map((_, i) => {
+        const date = subDays(now, i);
+        const formatted = format(date, 'MMM dd');
+        const dayStart = startOfDay(date).getTime();
+        const dayEnd = dayStart + 86400000;
+        
+        const closures = currentTasks.filter(t => {
+          if (!t.closureDate) return false;
+          const cTime = parseISO(t.closureDate).getTime();
+          return cTime >= dayStart && cTime < dayEnd;
+        }).length;
+
+        return { name: formatted, closures, date: dayStart };
+      }).reverse();
+    } else if (trendPeriod === 'quarterly') {
+      // Group by week for quarterly trend
+      trendData = Array.from({ length: 13 }).map((_, i) => {
+        const date = subDays(now, i * 7);
+        const formatted = `Wk ${13 - i}`;
+        const weekStart = startOfDay(date).getTime() - (6 * 86400000); // approx start of week
         const weekEnd = startOfDay(date).getTime() + 86400000;
         
         const closures = currentTasks.filter(t => {
@@ -755,15 +734,10 @@ export default function App() {
         return { name: formatted, closures, date: weekStart };
       }).reverse();
     } else {
-      // Group by month for long ranges
-      let monthsCount = 12;
-      if (trendPeriod === 'quarterly') monthsCount = 3;
-      else if (trendPeriod === 'semi-annual') monthsCount = 6;
-      else if (trendPeriod === 'three-quarter') monthsCount = 9;
-      else if (trendPeriod === 'custom') monthsCount = Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / (1440 * 30)));
-
-      trendData = Array.from({ length: monthsCount }).map((_, i) => {
-        const date = subDays(periodEnd, i * 30);
+      // Semi-Annual, Three-Quarter, Yearly: Group by month
+      const months = trendPeriod === 'semi-annual' ? 6 : trendPeriod === 'three-quarter' ? 9 : 12;
+      trendData = Array.from({ length: months }).map((_, i) => {
+        const date = subDays(now, i * 30); // approx monthly slots
         const formatted = format(date, 'MMM yy');
         const monthStart = startOfDay(date).getTime() - (29 * 86400000);
         const monthEnd = startOfDay(date).getTime() + 86400000;
@@ -878,7 +852,7 @@ export default function App() {
           }
         } catch (error) {
           console.error('Error saving task:', error);
-          alert('Could not connect to the service backend. Please ensure the server is running.');
+          alert('Could not connect to the Java backend. Please ensure the Spring Boot app is running on port 8080.');
         }
       },
       'info',
@@ -1332,7 +1306,7 @@ export default function App() {
           <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Syncing with Service Backend...</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Syncing with Java Backend...</p>
             </div>
           </div>
         )}
@@ -1494,67 +1468,35 @@ export default function App() {
                 exit={{ opacity: 0, y: -20 }}
                 className="grid grid-cols-1 lg:grid-cols-2 gap-4"
               >
-                <div className="lg:col-span-2 flex flex-col md:flex-row items-center justify-between gap-6 bg-slate-900/40 p-6 rounded-3xl border border-slate-800/50 mb-2">
+                <div className="lg:col-span-2 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-900/40 p-5 rounded-3xl border border-slate-800/50 mb-2">
                   <div className="flex items-center gap-4">
-                    <div className="p-3.5 bg-blue-500/10 rounded-2xl">
+                    <div className="p-3 bg-blue-500/10 rounded-2xl">
                       <Clock className="w-6 h-6 text-blue-500" />
                     </div>
                     <div>
-                      <h3 className="text-white font-black text-sm uppercase tracking-widest leading-none">Timeframe Intelligence</h3>
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-2">Dynamic window filters for all metrics</p>
+                      <h3 className="text-white font-black text-sm uppercase tracking-widest">Timeframe Intelligence</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Dynamic report window selection for all analytics</p>
                     </div>
                   </div>
-
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
-                    {trendPeriod === 'custom' && (
-                      <motion.div 
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="flex items-center gap-3 bg-slate-950/50 p-2 rounded-2xl border border-slate-800"
-                      >
-                        <div className="space-y-1">
-                          <p className="text-[8px] font-black text-slate-500 uppercase px-2">From</p>
-                          <input 
-                            type="date" 
-                            value={customDateRange.start}
-                            onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
-                            className="bg-transparent text-white text-[10px] font-mono font-bold px-2 focus:outline-none"
-                          />
-                        </div>
-                        <div className="h-6 w-[1px] bg-slate-800 self-end mb-1" />
-                        <div className="space-y-1">
-                          <p className="text-[8px] font-black text-slate-500 uppercase px-2">To</p>
-                          <input 
-                            type="date" 
-                            value={customDateRange.end}
-                            onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
-                            className="bg-transparent text-white text-[10px] font-mono font-bold px-2 focus:outline-none"
-                          />
-                        </div>
-                      </motion.div>
-                    )}
-
-                    <div className="relative group min-w-[180px]">
-                      <select
-                        value={trendPeriod}
-                        onChange={(e) => setTrendPeriod(e.target.value as any)}
-                        className="appearance-none w-full bg-slate-800 border border-slate-700 text-white text-[10px] font-black uppercase tracking-widest pl-10 pr-10 py-3.5 rounded-xl cursor-pointer hover:bg-slate-750 hover:border-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                      >
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="quarterly">Quarterly</option>
-                        <option value="semi-annual">Semi-Annual</option>
-                        <option value="three-quarter">Three-Quarter</option>
-                        <option value="yearly">Yearly</option>
-                        <option value="custom">Custom Range</option>
-                      </select>
-                      <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
-                         <Calendar className="w-4 h-4 text-blue-500" />
-                      </div>
-                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
-                         <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
-                      </div>
+                  <div className="relative group min-w-[200px]">
+                    <select
+                      value={trendPeriod}
+                      onChange={(e) => setTrendPeriod(e.target.value as any)}
+                      className="appearance-none w-full bg-slate-800 border border-slate-700 text-white text-[10px] font-black uppercase tracking-widest pl-10 pr-10 py-3 rounded-xl cursor-not-allowed group-hover:cursor-pointer hover:bg-slate-750 hover:border-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <option value="weekly">Weekly View</option>
+                      <option value="monthly">Monthly View</option>
+                      <option value="quarterly">Quarterly View</option>
+                      <option value="semi-annual">Semi-Annual View</option>
+                      <option value="three-quarter">Three-Quarter View</option>
+                      <option value="yearly">Yearly View</option>
+                    </select>
+                    <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                       <Calendar className="w-4 h-4 text-blue-500" />
+                    </div>
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                       <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
                     </div>
                   </div>
                 </div>
