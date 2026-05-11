@@ -7,6 +7,13 @@ export type SupportLevel = 'L1' | 'L2' | 'L3' | 'L4';
 export type Priority = 'P1' | 'P2' | 'P3' | 'P4';
 export type TaskStatus = 'Open' | 'In-Progress' | 'Hold' | 'Resolved' | 'Closed';
 
+export interface AuditEvent {
+  timestamp: string;
+  user: string;
+  action: string;
+  details?: string;
+}
+
 export interface SupportTask {
   id: number; // Database ID
   ticketId: string; // Human readable ID (e.g. INC-1001)
@@ -22,6 +29,8 @@ export interface SupportTask {
   solution: string;
   remarks: string;
   assignedTo: string;
+  resolutionDetails?: string;
+  auditLog: AuditEvent[];
 }
 
 export const PRIORITY_COLORS = {
@@ -62,4 +71,12 @@ export interface ProjectConfig {
   workingDays: string[];
   holidays: string[];
   employeeShifts: EmployeeShift[];
+}
+
+export interface AppUser {
+  id: string; // User ID
+  name: string;
+  password?: string;
+  status: 'Active' | 'Deactivate';
+  role: string;
 }

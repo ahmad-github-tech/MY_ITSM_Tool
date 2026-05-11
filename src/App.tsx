@@ -16,10 +16,11 @@ import {
 import { 
   Activity, Clock, CheckCircle2, AlertCircle, Plus, 
   Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings,
-  Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert
+  Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert, UserPlus, Users, Key,
+  History, Eye, Scale, Terminal, Calendar
 } from 'lucide-react';
 import { format, subDays, differenceInMinutes, parseISO, startOfDay, addDays } from 'date-fns';
-import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig } from './types';
+import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig, AppUser } from './types';
 import { cn, formatDuration, downloadCSV, exportToExcel } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -135,8 +136,70 @@ export default function App() {
     };
   };
 
-  const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details' | 'user-onboard'>('analytics');
   const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
+  
+  // User Onboard State
+  const [users, setUsers] = useState<AppUser[]>([
+    { id: 'Admin', name: 'Admin User', role: 'Administrator', status: 'Active' },
+    { id: 'John.D', name: 'John Doe', role: 'Support Specialist', status: 'Active' },
+    { id: 'Sarah.M', name: 'Sarah Miller', role: 'L2 Engineer', status: 'Active' },
+    { id: 'Support.Alpha', name: 'Alpha Support', role: 'Standard User', status: 'Active' },
+  ]);
+
+  const [userFormData, setUserFormData] = useState<Partial<AppUser>>({
+    id: '',
+    name: '',
+    password: '',
+    status: 'Active',
+    role: 'Standard User'
+  });
+
+  const handleAddUser = () => {
+    if (!userFormData.id || !userFormData.name) return;
+    
+    askConfirmation(
+      'Onboard New User',
+      `This will create access for "${userFormData.name}" (${userFormData.id}) as ${userFormData.role}. Continue?`,
+      () => {
+        const newUser: AppUser = {
+          id: userFormData.id!,
+          name: userFormData.name!,
+          password: userFormData.password || 'Welcome123!',
+          status: (userFormData.status as any) || 'Active',
+          role: userFormData.role || 'Standard User'
+        };
+        
+        setUsers(prev => [...prev, newUser]);
+        setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+      },
+      'info',
+      'Onboard'
+    );
+  };
+
+  const handleToggleUserStatus = (userId: string) => {
+    setUsers(prev => prev.map(u => {
+      if (u.id === userId) {
+        const nextStatus = u.status === 'Active' ? 'Deactivate' : 'Active';
+        return { ...u, status: nextStatus };
+      }
+      return u;
+    }));
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    if (userId === 'Admin') return;
+    askConfirmation(
+      'Offboard User',
+      `Permanently remove access for user ID "${userId}"? This action cannot be undone.`,
+      () => {
+        setUsers(prev => prev.filter(u => u.id !== userId));
+      },
+      'danger',
+      'Delete'
+    );
+  };
   
   // Shift & Strategy states
   const [tempShiftStart, setTempShiftStart] = useState('09:00');
@@ -355,6 +418,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<string>('All');
   const [selectedEmployee, setSelectedEmployee] = useState<string>('All');
   const [editingTask, setEditingTask] = useState<SupportTask | null>(null);
+  const [auditTask, setAuditTask] = useState<SupportTask | null>(null);
   
   // Dynamic Projects List
   const PROJECTS_LIST = useMemo(() => projectsDB.map(p => p.name), [projectsDB]);
@@ -472,6 +536,7 @@ export default function App() {
     solution: '',
     remarks: '',
     assignedTo: 'Admin',
+    resolutionDetails: '',
   });
 
   // Reset projectId in formData when projects load
@@ -673,7 +738,36 @@ export default function App() {
       `${actionLabel} Ticket Record`,
       `Are you sure you want to ${editingTask ? 'update' : 'add'} this ticket record to the database?`,
       async () => {
+        const nowIso = new Date().toISOString();
         // Prepare payload (convert strings to ISO dates if necessary for backend)
+        const currentAuditLog = editingTask?.auditLog || [
+          {
+            timestamp: formData.generationDate ? new Date(formData.generationDate).toISOString() : nowIso,
+            user: 'System',
+            action: 'Ticket Created',
+            details: 'Initial record entry into system'
+          }
+        ];
+
+        let newEvents: any[] = [];
+        if (editingTask) {
+          if (editingTask.status !== formData.status) {
+            newEvents.push({ timestamp: nowIso, user: currentUser, action: 'Status Update', details: `Status changed from ${editingTask.status} to ${formData.status}` });
+          }
+          if (editingTask.priority !== formData.priority) {
+            newEvents.push({ timestamp: nowIso, user: currentUser, action: 'Priority Adjustment', details: `Severity scale modified from ${editingTask.priority} to ${formData.priority}` });
+          }
+          if (editingTask.assignedTo !== formData.assignedTo) {
+            newEvents.push({ timestamp: nowIso, user: currentUser, action: 'Escalation/Shift', details: `Ownership transferred from ${editingTask.assignedTo} to ${formData.assignedTo}` });
+          }
+          if (editingTask.solution !== formData.solution) {
+            newEvents.push({ timestamp: nowIso, user: currentUser, action: 'Resolution Update', details: 'Updated troubleshooting steps or final solution' });
+          }
+          if (newEvents.length === 0) {
+            newEvents.push({ timestamp: nowIso, user: currentUser, action: 'General Update', details: 'Metadata or descriptive changes recorded' });
+          }
+        }
+
         const payload = {
           ticketId: formData.ticketId || `INC-${1000 + tasks.length}`,
           projectId: formData.projectId!,
@@ -688,6 +782,8 @@ export default function App() {
           solution: formData.solution || '',
           remarks: formData.remarks || '',
           assignedTo: editingTask ? formData.assignedTo : currentUser,
+          resolutionDetails: formData.resolutionDetails || '',
+          auditLog: [...currentAuditLog, ...newEvents]
         };
 
         try {
@@ -725,6 +821,7 @@ export default function App() {
               solution: '',
               remarks: '',
               assignedTo: currentUser,
+              resolutionDetails: '',
             });
           }
         } catch (error) {
@@ -838,6 +935,7 @@ export default function App() {
       solution: '',
       remarks: '',
       assignedTo: currentUser,
+      resolutionDetails: '',
     });
   };
 
@@ -857,6 +955,7 @@ export default function App() {
       solution: task.solution,
       remarks: task.remarks,
       assignedTo: task.assignedTo,
+      resolutionDetails: task.resolutionDetails || '',
     });
     setIsSidebarOpen(true);
   };
@@ -1124,12 +1223,24 @@ export default function App() {
 
             {editingTask && (
               <div>
-                <label className="label-sm">Resolution Details</label>
+                <label className="label-sm">Technical Solution</label>
                 <textarea 
-                  className="input-field min-h-[100px] resize-none" 
+                  className="input-field min-h-[80px] resize-none" 
                   placeholder="Describe the solution provided..."
                   value={formData.solution}
                   onChange={e => setFormData({ ...formData, solution: e.target.value })}
+                />
+              </div>
+            )}
+
+            {editingTask && (
+              <div>
+                <label className="label-sm">Resolution Details (Audit)</label>
+                <textarea 
+                  className="input-field min-h-[80px] resize-none" 
+                  placeholder="Additional resolution steps or root cause analysis..."
+                  value={formData.resolutionDetails}
+                  onChange={e => setFormData({ ...formData, resolutionDetails: e.target.value })}
                 />
               </div>
             )}
@@ -1263,6 +1374,15 @@ export default function App() {
                 )}
               >
                 Mapping Details
+              </button>
+              <button 
+                onClick={() => setActiveTab('user-onboard')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-bold transition-all",
+                  activeTab === 'user-onboard' ? "bg-slate-800 text-white shadow-lg shadow-black/20" : "text-slate-500 hover:text-slate-300"
+                )}
+              >
+                User Onboard
               </button>
             </div>
             
@@ -1725,6 +1845,13 @@ export default function App() {
                               </td>
                               <td className="px-4 py-4 text-right">
                                 <div className="flex items-center justify-end gap-2">
+                                  <button 
+                                    onClick={() => setAuditTask(task)}
+                                    className="p-1.5 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-400 rounded transition-all opacity-0 group-hover:opacity-100"
+                                    title="View Audit & SLA Details"
+                                  >
+                                    <History className="w-3.5 h-3.5" />
+                                  </button>
                                   {(isAdmin || task.assignedTo === currentUser) && (
                                     <>
                                       <button 
@@ -2477,7 +2604,405 @@ export default function App() {
                     </table>
                   </div>
                 </div>
+
+                {/* 4th segment: Individual Resource Shifts Allocation Details */}
+                <div className="chart-container overflow-hidden">
+                  <div className="p-6 border-b border-slate-800/50 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Individual Resource Shifts Allocation Details</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Personnel-specific shift overrides across all projects</p>
+                    </div>
+                    <div className="px-3 py-1 bg-fuchsia-500/10 border border-fuchsia-500/20 rounded text-[10px] font-black text-fuchsia-500 uppercase tracking-widest">
+                      Custom Overrides
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-900/50 border-b border-slate-800">
+                        <tr>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Personnel</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Project</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Shift Window</th>
+                          <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Working Days</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/30">
+                        {projectConfigs.flatMap(config => 
+                          config.employeeShifts.map(shift => ({
+                            ...shift,
+                            projectId: config.projectId
+                          }))
+                        ).map((item, idx) => (
+                          <tr key={`${item.projectId}-${item.name}-${idx}`} className="hover:bg-slate-800/20 transition-colors">
+                            <td className="px-6 py-4 text-white font-bold text-[11px]">{item.name}</td>
+                            <td className="px-6 py-4">
+                              <span className="text-[10px] font-black text-blue-400 uppercase tracking-tighter bg-blue-500/5 px-2 py-1 rounded border border-blue-500/10">
+                                {item.projectId}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <Clock className="w-3 h-3 text-slate-500" />
+                                <span className="text-[10px] font-mono text-slate-300">{item.shiftStart} - {item.shiftEnd}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-1">
+                                {item.workingDays.map(d => (
+                                  <span key={d} className="px-1.5 py-0.5 bg-slate-800 rounded text-[8px] font-black text-slate-400 uppercase border border-slate-700">{d}</span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {projectConfigs.every(c => c.employeeShifts.length === 0) && (
+                          <tr>
+                            <td colSpan={4} className="px-6 py-12 text-center text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                              No individual shift overrides configured across any projects
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </motion.div>
+            )}
+
+            {activeTab === 'user-onboard' && (
+              <motion.div 
+                key="user-onboard"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Column: Register User */}
+                  <div className="lg:col-span-1 space-y-6">
+                    <div className="chart-container p-6 bg-slate-900/40 border-l-4 border-fuchsia-500">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-fuchsia-500/10 rounded-lg">
+                          <UserPlus className="w-5 h-5 text-fuchsia-500" />
+                        </div>
+                        <h3 className="text-lg font-black text-white uppercase tracking-tight">Onboard New User</h3>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="label-sm block mb-1.5">User ID / Primary Key</label>
+                          <input 
+                            type="text" 
+                            className="input-field w-full"
+                            placeholder="e.g. jamal.e"
+                            value={userFormData.id || ''}
+                            onChange={e => setUserFormData({...userFormData, id: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="label-sm block mb-1.5">Full Personnel Name</label>
+                          <input 
+                            type="text" 
+                            className="input-field w-full"
+                            placeholder="e.g. Jamal Hassan"
+                            value={userFormData.name || ''}
+                            onChange={e => setUserFormData({...userFormData, name: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="label-sm block mb-1.5">Initial Security Key</label>
+                          <div className="relative">
+                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                            <input 
+                              type="password" 
+                              className="input-field w-full pl-10"
+                              placeholder="••••••••"
+                              value={userFormData.password || ''}
+                              onChange={e => setUserFormData({...userFormData, password: e.target.value})}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="label-sm block mb-1.5">Designated Role</label>
+                          <select 
+                            className="input-field w-full"
+                            value={userFormData.role || 'Standard User'}
+                            onChange={e => setUserFormData({...userFormData, role: e.target.value})}
+                          >
+                            <option value="Administrator">Administrator</option>
+                            <option value="Support Specialist">Support Specialist</option>
+                            <option value="L2 Engineer">L2 Engineer</option>
+                            <option value="Standard User">Standard User</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="label-sm block mb-1.5">Access Status</label>
+                          <select 
+                            className="input-field w-full text-xs"
+                            value={userFormData.status || 'Active'}
+                            onChange={e => setUserFormData({...userFormData, status: e.target.value as any})}
+                          >
+                            <option value="Active">Active</option>
+                            <option value="Deactivate">Deactivate</option>
+                          </select>
+                        </div>
+                        
+                        <button 
+                          onClick={handleAddUser}
+                          className="w-full py-3 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-black uppercase tracking-widest text-[10px] rounded transition-all shadow-lg flex items-center justify-center gap-2 mt-4"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Commit Identity Access
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: User Inventory */}
+                  <div className="lg:col-span-2 space-y-6">
+                    <div className="chart-container overflow-hidden">
+                      <div className="p-6 border-b border-slate-800/50 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Users className="w-5 h-5 text-blue-400" />
+                          <div>
+                            <h3 className="text-sm font-black text-white uppercase tracking-widest">System User Inventory</h3>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Management of authorized personnel and status</p>
+                          </div>
+                        </div>
+                        <div className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] font-black text-blue-500 uppercase tracking-widest">
+                          {users.length} Records
+                        </div>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-slate-900/50 border-b border-slate-800">
+                            <tr>
+                              <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Personnel</th>
+                              <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">UID</th>
+                              <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Level/Role</th>
+                              <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500">Status</th>
+                              <th className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-500 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/30">
+                            {users.map((user) => (
+                              <tr key={user.id} className="hover:bg-slate-800/20 transition-colors group">
+                                <td className="px-6 py-4 text-white font-bold text-[11px]">{user.name}</td>
+                                <td className="px-6 py-4 text-slate-500 font-mono text-[10px] uppercase">{user.id}</td>
+                                <td className="px-6 py-4">
+                                  <span className="px-2 py-0.5 bg-slate-800 text-slate-300 rounded text-[9px] font-bold uppercase tracking-wide border border-slate-700">
+                                    {user.role}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <button
+                                    onClick={() => handleToggleUserStatus(user.id)}
+                                    className={cn(
+                                      "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
+                                      user.status === 'Active' 
+                                        ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/20" 
+                                        : "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                                    )}
+                                  >
+                                    {user.status}
+                                  </button>
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  {user.id !== 'Admin' && (
+                                    <button 
+                                      onClick={() => handleDeleteUser(user.id)}
+                                      className="p-1.5 bg-red-500/5 hover:bg-red-500/10 text-red-900 hover:text-red-500 rounded transition-all opacity-0 group-hover:opacity-100"
+                                      title="Offboard User"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {user.id === 'Admin' && (
+                                    <div className="p-1.5 text-slate-700 cursor-not-allowed">
+                                      <ShieldAlert className="w-3.5 h-3.5" />
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {auditTask && (
+              <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9, y: 40 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: 40 }}
+                  className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                >
+                  <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-blue-500/10 rounded-2xl">
+                        <Terminal className="w-6 h-6 text-blue-500" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-white uppercase tracking-tighter flex items-center gap-2">
+                          Audit Trail & SLA Analysis
+                          <span className="px-2 py-0.5 bg-slate-800 text-[10px] text-slate-500 rounded border border-slate-700">
+                             {auditTask.ticketId}
+                          </span>
+                        </h3>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Lifecycle tracking for incident resolution</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setAuditTask(null)}
+                      className="p-2 hover:bg-slate-800 rounded-xl text-slate-500 hover:text-white transition-all"
+                    >
+                      <RotateCcw className="w-5 h-5 rotate-45" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+                    {/* SLA Section */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                         <div className="flex items-center gap-2 mb-2">
+                            <Scale className="w-4 h-4 text-emerald-500" />
+                            <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">SLA Benchmark Performance</h4>
+                         </div>
+                         <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                               <p className="text-[9px] text-slate-500 uppercase font-black mb-1">Response Phase</p>
+                               <div className="flex items-end gap-2">
+                                  <p className="text-xl font-mono text-white">
+                                    {Math.round(getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)))}
+                                  </p>
+                                  <span className="text-[8px] text-slate-600 font-bold uppercase mb-1">Minutes</span>
+                               </div>
+                               <div className="mt-2 text-[9px] font-bold text-blue-500/80 bg-blue-500/5 px-2 py-1 rounded border border-blue-500/10 w-fit">
+                                  Target: {projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].response}h
+                               </div>
+                            </div>
+                            <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                               <p className="text-[9px] text-slate-500 uppercase font-black mb-1">Resolution Phase</p>
+                               <div className="flex items-end gap-2">
+                                  <p className="text-xl font-mono text-white">
+                                    {auditTask.closureDate 
+                                      ? Math.round(getBusinessMinutes(auditTask.generationDate, auditTask.closureDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)))
+                                      : '---'}
+                                  </p>
+                                  <span className="text-[8px] text-slate-600 font-bold uppercase mb-1">Minutes</span>
+                               </div>
+                               <div className="mt-2 text-[9px] font-bold text-indigo-500/80 bg-indigo-500/5 px-2 py-1 rounded border border-indigo-500/10 w-fit">
+                                  Target: {projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].resolution}h
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Activity className="w-4 h-4 text-purple-500" />
+                            <h4 className="text-[10px] font-black text-purple-500 uppercase tracking-widest">Incident Parameters</h4>
+                         </div>
+                         <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 h-full">
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center text-[10px]">
+                                  <span className="text-slate-500 font-bold uppercase">Creation Timestamp</span>
+                                  <span className="text-white font-mono">{format(parseISO(auditTask.generationDate), 'MMM dd, HH:mm:ss')}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-[10px]">
+                                  <span className="text-slate-500 font-bold uppercase">Assigned Entity</span>
+                                  <span className="text-blue-400 font-bold">{auditTask.assignedTo}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-[10px]">
+                                  <span className="text-slate-500 font-bold uppercase">Severity Tier</span>
+                                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-white font-bold">{auditTask.priority}</span>
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+                    </div>
+
+                    {/* Resolution Section */}
+                    <div className="space-y-4">
+                       <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-blue-400" />
+                          <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Resolution Summary</h4>
+                       </div>
+                       <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                             <div>
+                                <p className="text-[9px] text-slate-500 uppercase font-black mb-3 tracking-widest">Technical Solution</p>
+                                <p className="text-xs text-slate-300 leading-relaxed italic">
+                                  {auditTask.solution || 'Awaiting resolution document entry...'}
+                                </p>
+                             </div>
+                             <div>
+                                <p className="text-[9px] text-slate-500 uppercase font-black mb-3 tracking-widest">Resolution Details</p>
+                                <p className="text-xs text-slate-300 leading-relaxed font-mono">
+                                  {auditTask.resolutionDetails || 'No auxiliary details provided.'}
+                                </p>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Timeline Section */}
+                    <div className="space-y-4">
+                       <div className="flex items-center gap-2">
+                          <History className="w-4 h-4 text-slate-500" />
+                          <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Audit Event Timeline</h4>
+                       </div>
+                       <div className="relative pl-8 space-y-6 before:absolute before:left-3 before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-800">
+                          {auditTask.auditLog?.map((event, idx) => (
+                             <div key={idx} className="relative">
+                                <div className="absolute -left-[25px] top-1.5 w-3 h-3 rounded-full bg-slate-900 border-2 border-blue-500 z-10 shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
+                                <div className="bg-slate-950/30 p-4 rounded-2xl border border-slate-800/50 hover:border-slate-700 transition-colors">
+                                   <div className="flex items-center justify-between mb-2">
+                                      <span className="text-[11px] font-black text-white uppercase tracking-tight">{event.action}</span>
+                                      <div className="flex items-center gap-2 text-[9px] font-bold text-slate-500">
+                                         <Calendar className="w-3 h-3" />
+                                         {format(new Date(event.timestamp), 'MMM dd, HH:mm:ss')}
+                                      </div>
+                                   </div>
+                                   <p className="text-[10px] text-slate-400">{event.details}</p>
+                                   <div className="mt-3 pt-3 border-t border-slate-800/50 flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                         <div className="w-4 h-4 rounded-full bg-slate-800 flex items-center justify-center text-[8px] font-bold text-slate-500">
+                                            {event.user.charAt(0)}
+                                         </div>
+                                         <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Initiated by {event.user}</span>
+                                      </div>
+                                   </div>
+                                </div>
+                             </div>
+                          ))}
+                          {(!auditTask.auditLog || auditTask.auditLog.length === 0) && (
+                            <div className="text-center py-8 text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                               No legacy audit records found for this entry
+                            </div>
+                          )}
+                       </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end">
+                    <button 
+                      onClick={() => setAuditTask(null)}
+                      className="px-8 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-500/20"
+                    >
+                      Acknowledge Review
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
             )}
           </AnimatePresence>
 
