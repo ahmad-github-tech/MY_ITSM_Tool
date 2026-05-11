@@ -2663,7 +2663,7 @@ export default function App() {
                                       <span className="text-[10px] font-black text-amber-500 uppercase tracking-tighter w-4">{p}</span>
                                       <div className="flex flex-row gap-3 border-l border-slate-700 pl-2">
                                         <div className="flex items-center gap-1.5">
-                                          <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none">Request</span>
+                                          <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest leading-none">Response</span>
                                           <span className="text-[10px] font-bold text-slate-200 leading-none">{config.slas?.[p]?.response || 0}h</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
