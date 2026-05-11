@@ -104,8 +104,12 @@ export default function App() {
     holidays: string[]
   }) => {
     if (!startStr || !endStr) return 0;
+    
+    // Ensure we parse consistently. If it's a local date string from our app, 
+    // parseISO handles it. If it's a JS Date .toISOString(), parseISO also handles it.
     const start = parseISO(startStr);
     const end = parseISO(endStr);
+    
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
     if (start > end) return 0;
 
@@ -126,11 +130,16 @@ export default function App() {
         let dayEffStart = shiftStartMinutes;
         let dayEffEnd = shiftEndMinutes;
 
-        if (current.getTime() === startOfDay(start).getTime()) {
-           dayEffStart = Math.max(shiftStartMinutes, start.getHours() * 60 + start.getMinutes());
+        // If today is the start day, adjust start time
+        if (format(current, 'yyyy-MM-dd') === format(start, 'yyyy-MM-dd')) {
+           const startTotalMinutes = start.getHours() * 60 + start.getMinutes();
+           dayEffStart = Math.max(shiftStartMinutes, startTotalMinutes);
         }
-        if (current.getTime() === startOfDay(end).getTime()) {
-           dayEffEnd = Math.min(shiftEndMinutes, end.getHours() * 60 + end.getMinutes());
+        
+        // If today is the end day, adjust end time
+        if (format(current, 'yyyy-MM-dd') === format(end, 'yyyy-MM-dd')) {
+           const endTotalMinutes = end.getHours() * 60 + end.getMinutes();
+           dayEffEnd = Math.min(shiftEndMinutes, endTotalMinutes);
         }
 
         if (dayEffEnd > dayEffStart) {
@@ -166,6 +175,7 @@ export default function App() {
     { id: 'Sarah.M', name: 'Sarah Miller', role: 'L2 Engineer', status: 'Active' },
     { id: 'Support.Alpha', name: 'Alpha Support', role: 'Standard User', status: 'Active' },
   ]);
+  const [editingUser, setEditingUser] = useState<string | null>(null);
 
   const [userFormData, setUserFormData] = useState<Partial<AppUser>>({
     id: '',
@@ -179,48 +189,73 @@ export default function App() {
     if (!userFormData.id || !userFormData.name) return;
     
     askConfirmation(
-      'Onboard New User',
-      `This will create access for "${userFormData.name}" (${userFormData.id}) as ${userFormData.role}. Continue?`,
+      editingUser ? 'Update User Identity' : 'Onboard New User',
+      editingUser 
+        ? `This will update access details for "${userFormData.name}" (${userFormData.id}). Continue?`
+        : `This will create access for "${userFormData.name}" (${userFormData.id}) as ${userFormData.role}. Continue?`,
       async () => {
+        const existingUser = editingUser ? users.find(u => u.id === editingUser) : null;
         const newUser: AppUser = {
           id: userFormData.id!,
           name: userFormData.name!,
-          password: userFormData.password || 'Welcome123!',
+          password: userFormData.password || (existingUser?.password) || 'Welcome123!',
           status: (userFormData.status as any) || 'Active',
           role: userFormData.role || 'Standard User'
         };
         
         try {
-          const response = await fetch(API_USERS, {
-            method: 'POST',
+          const response = await fetch(editingUser ? `${API_USERS}/${editingUser}` : API_USERS, {
+            method: editingUser ? 'PUT' : 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newUser)
           });
           if (response.ok) {
             await fetchUsers();
             setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+            setEditingUser(null);
           } else {
             // If API fails, still update local UI for demo purposes but log error
             console.error("Failed to persist user to DB");
-            setUsers(prev => [...prev, newUser]);
+            if (editingUser) {
+              setUsers(prev => prev.map(u => u.id === editingUser ? newUser : u));
+            } else {
+              setUsers(prev => [...prev, newUser]);
+            }
             setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+            setEditingUser(null);
           }
         } catch (error) {
-          console.error("Error adding user:", error);
-          setUsers(prev => [...prev, newUser]);
+          console.error("Error saving user:", error);
+          if (editingUser) {
+            setUsers(prev => prev.map(u => u.id === editingUser ? newUser : u));
+          } else {
+            setUsers(prev => [...prev, newUser]);
+          }
           setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+          setEditingUser(null);
         }
       },
       'info',
-      'Onboard'
+      editingUser ? 'Update' : 'Onboard'
     );
+  };
+
+  const handleEditUser = (user: AppUser) => {
+    setEditingUser(user.id);
+    setUserFormData({
+      id: user.id,
+      name: user.name,
+      password: user.password || '',
+      status: user.status,
+      role: user.role
+    });
   };
 
   const handleToggleUserStatus = async (userId: string) => {
     const user = users.find(u => u.id === userId);
     if (!user) return;
     
-    const updatedStatus = user.status === 'Active' ? 'Deactivate' : 'Active';
+    const updatedStatus = user.status === 'Active' ? 'Inactive' : 'Active';
     const updatedUser = { ...user, status: updatedStatus };
 
     try {
@@ -1132,7 +1167,7 @@ export default function App() {
         'Close Date': t.closureDate ? format(parseISO(t.closureDate), 'yyyy-MM-dd HH:mm') : '-',
         'Response SLA Status': responseSlaStatus,
         'Resolution Status': resolutionSlaStatus,
-        'Aging (H:M)': `${Math.floor(Math.max(0, agingMin) / 60)}:${(Math.max(0, agingMin) % 60).toString().padStart(2, '0')}`,
+        'Aging': formatDuration(agingMin * 60000),
         'Description': t.description,
       };
     });
@@ -2030,10 +2065,9 @@ export default function App() {
                               <td className="px-4 py-4 text-center">
                                 <span className="text-xs font-mono text-slate-300">
                                   {(() => {
-                                    const totalMin = getBusinessMinutes(task.generationDate, task.closureDate ? task.closureDate : new Date().toISOString(), getEffectiveShift(task.projectId, task.assignedTo));
-                                    const h = Math.floor(Math.max(0, totalMin) / 60);
-                                    const m = Math.max(0, totalMin) % 60;
-                                    return `${h}:${m.toString().padStart(2, '0')}`;
+                                    const now = format(new Date(), "yyyy-MM-dd'T'HH:mm:ss");
+                                    const totalMin = getBusinessMinutes(task.generationDate, task.closureDate ? task.closureDate : now, getEffectiveShift(task.projectId, task.assignedTo));
+                                    return formatDuration(totalMin * 60000);
                                   })()}
                                 </span>
                               </td>
@@ -2879,7 +2913,9 @@ export default function App() {
                         <div className="p-2 bg-fuchsia-500/10 rounded-lg">
                           <UserPlus className="w-5 h-5 text-fuchsia-500" />
                         </div>
-                        <h3 className="text-lg font-black text-white uppercase tracking-tight">Onboard New User</h3>
+                        <h3 className="text-lg font-black text-white uppercase tracking-tight">
+                          {editingUser ? 'Update User Identity' : 'Onboard New User'}
+                        </h3>
                       </div>
                       
                       <div className="space-y-4">
@@ -2887,10 +2923,11 @@ export default function App() {
                           <label className="label-sm block mb-1.5">User ID / Primary Key</label>
                           <input 
                             type="text" 
-                            className="input-field w-full"
+                            className="input-field w-full disabled:opacity-50 disabled:cursor-not-allowed"
                             placeholder="e.g. jamal.e"
                             value={userFormData.id || ''}
                             onChange={e => setUserFormData({...userFormData, id: e.target.value})}
+                            disabled={!!editingUser}
                           />
                         </div>
                         <div>
@@ -2904,13 +2941,13 @@ export default function App() {
                           />
                         </div>
                         <div>
-                          <label className="label-sm block mb-1.5">Initial Security Key</label>
+                          <label className="label-sm block mb-1.5">{editingUser ? 'Update Security Key' : 'Initial Security Key'}</label>
                           <div className="relative">
                             <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                             <input 
                               type="password" 
                               className="input-field w-full pl-10"
-                              placeholder="••••••••"
+                              placeholder={editingUser ? "Leave blank to keep current" : "••••••••"}
                               value={userFormData.password || ''}
                               onChange={e => setUserFormData({...userFormData, password: e.target.value})}
                             />
@@ -2934,17 +2971,30 @@ export default function App() {
                             onChange={e => setUserFormData({...userFormData, status: e.target.value as any})}
                           >
                             <option value="Active">Active</option>
-                            <option value="Deactivate">Deactivate</option>
+                            <option value="Inactive">Inactive</option>
                           </select>
                         </div>
                         
-                        <button 
-                          onClick={handleAddUser}
-                          className="w-full py-3 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-black uppercase tracking-widest text-[10px] rounded transition-all shadow-lg flex items-center justify-center gap-2 mt-4"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Commit Identity Access
-                        </button>
+                        <div className="flex flex-col gap-2 mt-4">
+                          <button 
+                            onClick={handleAddUser}
+                            className="w-full py-3 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-black uppercase tracking-widest text-[10px] rounded transition-all shadow-lg flex items-center justify-center gap-2"
+                          >
+                            {editingUser ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                            {editingUser ? 'Apply Updates' : 'Commit Identity Access'}
+                          </button>
+                          {editingUser && (
+                            <button 
+                              onClick={() => {
+                                setEditingUser(null);
+                                setUserFormData({ id: '', name: '', password: '', status: 'Active', role: 'Standard User' });
+                              }}
+                              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold uppercase tracking-widest text-[9px] rounded transition-all border border-slate-700"
+                            >
+                              Cancel Edit
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3000,20 +3050,29 @@ export default function App() {
                                   </button>
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                  {user.id !== 'Admin' && (
+                                  <div className="flex items-center justify-end gap-2">
                                     <button 
-                                      onClick={() => handleDeleteUser(user.id)}
-                                      className="p-1.5 bg-red-500/5 hover:bg-red-500/10 text-red-900 hover:text-red-500 rounded transition-all opacity-0 group-hover:opacity-100"
-                                      title="Offboard User"
+                                      onClick={() => handleEditUser(user)}
+                                      className="p-1.5 bg-blue-500/5 hover:bg-blue-500/10 text-blue-900 hover:text-blue-400 rounded transition-all opacity-0 group-hover:opacity-100"
+                                      title="Edit User"
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <Pencil className="w-3.5 h-3.5" />
                                     </button>
-                                  )}
-                                  {user.id === 'Admin' && (
-                                    <div className="p-1.5 text-slate-700 cursor-not-allowed">
-                                      <ShieldAlert className="w-3.5 h-3.5" />
-                                    </div>
-                                  )}
+                                    {user.id !== 'Admin' && (
+                                      <button 
+                                        onClick={() => handleDeleteUser(user.id)}
+                                        className="p-1.5 bg-red-500/5 hover:bg-red-500/10 text-red-900 hover:text-red-500 rounded transition-all opacity-0 group-hover:opacity-100"
+                                        title="Offboard User"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {user.id === 'Admin' && (
+                                      <div className="p-1.5 text-slate-700 cursor-not-allowed">
+                                        <ShieldAlert className="w-3.5 h-3.5" />
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))}

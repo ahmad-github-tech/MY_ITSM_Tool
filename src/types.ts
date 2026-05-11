@@ -77,6 +77,6 @@ export interface AppUser {
   id: string; // User ID
   name: string;
   password?: string;
-  status: 'Active' | 'Deactivate';
+  status: 'Active' | 'Inactive';
   role: string;
 }
