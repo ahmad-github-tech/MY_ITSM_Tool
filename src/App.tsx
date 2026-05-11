@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import { 
   Activity, Clock, CheckCircle2, AlertCircle, Plus, 
-  Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings,
+  Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings, Save,
   Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert, UserPlus, Users, Key,
   History, Eye, Scale, Terminal, Calendar, ChevronDown, FileSpreadsheet, FileText
 } from 'lucide-react';
@@ -560,21 +560,31 @@ export default function App() {
   // Synchronize projectConfigs with projectsDB
   useEffect(() => {
     if (projectsDB.length > 0) {
-      setProjectConfigs(projectsDB.map(p => ({
-        projectId: p.name,
-        employees: p.employees ? p.employees.split(',').map((e: string) => e.trim()) : [],
-        slas: {
-          P1: { response: p.p1ResponseSla || 2, resolution: p.p1ResolutionSla || 4 },
-          P2: { response: p.p2ResponseSla || 4, resolution: p.p2ResolutionSla || 8 },
-          P3: { response: p.p3ResponseSla || 8, resolution: p.p3ResolutionSla || 24 },
-          P4: { response: p.p4ResponseSla || 24, resolution: p.p4ResolutionSla || 48 },
-        },
-        shiftStart: p.shiftStart || '09:00',
-        shiftEnd: p.shiftEnd || '18:00',
-        workingDays: p.workingDays ? p.workingDays.split(',').map((d: string) => d.trim()) : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-        holidays: p.holidays ? p.holidays.split(',').map((h: string) => h.trim()).filter(Boolean) : [],
-        employeeShifts: p.employeeShifts ? JSON.parse(p.employeeShifts) : [],
-      })));
+      setProjectConfigs(projectsDB.map(p => {
+        let employeeShifts = [];
+        try {
+          employeeShifts = p.employeeShifts ? (typeof p.employeeShifts === 'string' ? JSON.parse(p.employeeShifts) : p.employeeShifts) : [];
+        } catch (e) {
+          console.error('Error parsing employeeShifts for project:', p.name, e);
+          employeeShifts = [];
+        }
+
+        return {
+          projectId: p.name,
+          employees: p.employees ? p.employees.split(',').map((e: string) => e.trim()) : [],
+          slas: {
+            P1: { response: p.p1ResponseSla || 2, resolution: p.p1ResolutionSla || 4 },
+            P2: { response: p.p2ResponseSla || 4, resolution: p.p2ResolutionSla || 8 },
+            P3: { response: p.p3ResponseSla || 8, resolution: p.p3ResolutionSla || 24 },
+            P4: { response: p.p4ResponseSla || 24, resolution: p.p4ResolutionSla || 48 },
+          },
+          shiftStart: p.shiftStart || '09:00',
+          shiftEnd: p.shiftEnd || '18:00',
+          workingDays: p.workingDays ? p.workingDays.split(',').map((d: string) => d.trim()) : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+          holidays: p.holidays ? p.holidays.split(',').map((h: string) => h.trim()).filter(Boolean) : [],
+          employeeShifts: Array.isArray(employeeShifts) ? employeeShifts : [],
+        };
+      }));
     }
   }, [projectsDB]);
 
@@ -1204,12 +1214,13 @@ export default function App() {
       const originalTab = activeTab;
       if (activeTab !== 'analytics') {
         setActiveTab('analytics');
-        // Wait for tab to switch and charts to mount
-        await new Promise(resolve => setTimeout(resolve, 800));
+        // Wait for tab to switch and charts to mount/animate
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
       // Capture charts if in analytics tab
       let chartImages: string[] = [];
+      window.scrollTo(0, 0);
       const chartElements = document.querySelectorAll('.report-chart');
       
       if (chartElements.length > 0) {
@@ -1219,9 +1230,13 @@ export default function App() {
             html2canvas(el as HTMLElement, {
               backgroundColor: '#0f172a',
               logging: false,
-              scale: 2,
+              scale: 1.5,
               useCORS: true,
-              allowTaint: true
+              allowTaint: true,
+              scrollX: 0,
+              scrollY: 0,
+              windowWidth: el.scrollWidth,
+              windowHeight: el.scrollHeight
             }).then(canvas => canvas.toDataURL('image/png'))
           );
           chartImages = await Promise.all(captures);
@@ -2645,7 +2660,18 @@ export default function App() {
                               )}
                             </tbody>
                           </table>
-                       </div>
+                        </div>
+
+                        <div className="xl:col-span-3 flex justify-end mt-8">
+                          <button 
+                            onClick={handleSaveConfiguration}
+                            disabled={!currentConfig}
+                            className="btn-primary flex items-center gap-2 px-10 py-4 shadow-xl shadow-blue-500/20 uppercase font-black tracking-widest text-[12px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed group rounded-2xl"
+                          >
+                            <Save className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                            Commit Project Strategy & Shifts
+                          </button>
+                        </div>
                     </div>
                   </div>
                 </div>

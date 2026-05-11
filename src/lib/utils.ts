@@ -38,28 +38,40 @@ export function exportToPDF(sheets: { name: string; data: any[] }[], filename: s
   // Add Chart Images if present
   if (chartImages.length > 0) {
     chartImages.forEach((img, idx) => {
-      if (idx > 0 && idx % 2 === 0) doc.addPage();
+      // 4 charts per page (2x2)
+      const chartsPerPage = 4;
+      if (idx > 0 && idx % chartsPerPage === 0) doc.addPage();
       
-      const xPos = idx % 2 === 0 ? 14 : 154;
-      const yPos = 30;
+      const col = idx % 2; // 0 or 1
+      const row = Math.floor((idx % chartsPerPage) / 2); // 0 or 1
+      
+      const margin = 14;
+      const gap = 8;
+      const chartW = 128;
+      const chartH = 75;
+      
+      const xPos = margin + col * (chartW + gap);
+      const yPos = 35 + row * (chartH + gap);
       
       // Header for Chart Page
-      if (idx % 2 === 0) {
+      if (idx % chartsPerPage === 0) {
         doc.setFontSize(18);
         doc.setTextColor(15, 23, 42);
         doc.text('IT Support Visual Analytics', 14, 15);
         if (dateRange) {
           doc.setFontSize(10);
           doc.setTextColor(51, 65, 85);
-          doc.text(`Period: ${dateRange}`, 14, 22);
+          doc.text(`Strategic Performance Period: ${dateRange}`, 14, 22);
         }
         doc.setFontSize(10);
         doc.setTextColor(100, 116, 139);
-        doc.text(`Generated: ${now}`, 283, 22, { align: 'right' });
+        doc.text(`System Generated: ${now}`, 283, 22, { align: 'right' });
       }
 
       try {
-        doc.addImage(img, 'PNG', xPos, yPos, 130, 80);
+        if (img && img.length > 100) { // Basic validation
+          doc.addImage(img, 'PNG', xPos, yPos, chartW, chartH, undefined, 'FAST');
+        }
       } catch (e) {
         console.error('Error adding image to PDF:', e);
       }
@@ -88,10 +100,10 @@ export function exportToPDF(sheets: { name: string; data: any[] }[], filename: s
         head: [headers],
         body: rows,
         startY: 28,
-        styles: { fontSize: 7, cellPadding: 1.5, font: 'helvetica' },
-        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+        styles: { fontSize: 7.5, cellPadding: 2, font: 'helvetica', textColor: [51, 65, 85] },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 8 },
         alternateRowStyles: { fillColor: [248, 250, 252] }, // slate-50
-        margin: { top: 30 },
+        margin: { top: 30, left: 14, right: 14 },
         didParseCell: (data) => {
           if (data.cell.text[0] === 'MET') {
             data.cell.styles.textColor = [16, 185, 129]; // emerald-500
