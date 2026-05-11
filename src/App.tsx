@@ -39,8 +39,8 @@ const ISSUE_TEMPLATES = [
 ];
 
 // --- API Utils ---
-const API_BASE = 'http://localhost:8080/supportflow/api/tasks';
-const API_PROJECTS = 'http://localhost:8080/supportflow/api/projects';
+const API_BASE = '/supportflow/api/tasks';
+const API_PROJECTS = '/supportflow/api/projects';
 
 export default function App() {
   const [tasks, setTasks] = useState<SupportTask[]>([]);
@@ -878,7 +878,7 @@ export default function App() {
           }
         } catch (error) {
           console.error('Error saving task:', error);
-          alert('Could not connect to the Java backend. Please ensure the Spring Boot app is running on port 8080.');
+          alert('Could not connect to the service backend. Please ensure the server is running.');
         }
       },
       'info',
@@ -1332,7 +1332,7 @@ export default function App() {
           <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Syncing with Java Backend...</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Syncing with Service Backend...</p>
             </div>
           </div>
         )}
