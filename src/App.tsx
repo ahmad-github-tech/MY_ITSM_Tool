@@ -17,11 +17,11 @@ import {
   Activity, Clock, CheckCircle2, AlertCircle, Plus, 
   Search, Download, Trash2, LayoutDashboard, ListTodo, Filter, ChevronRight, Settings,
   Pencil, RotateCcw, AlertTriangle, Info, ShieldAlert, UserPlus, Users, Key,
-  History, Eye, Scale, Terminal, Calendar
+  History, Eye, Scale, Terminal, Calendar, ChevronDown, FileSpreadsheet, FileText
 } from 'lucide-react';
 import { format, subDays, differenceInMinutes, parseISO, startOfDay, addDays } from 'date-fns';
 import { SupportTask, SupportLevel, Priority, TaskStatus, PRIORITY_COLORS, STATUS_COLORS, ProjectConfig, AppUser } from './types';
-import { cn, formatDuration, downloadCSV, exportToExcel } from './lib/utils';
+import { cn, formatDuration, downloadCSV, exportToExcel, exportToPDF } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Constants ---
@@ -87,8 +87,10 @@ export default function App() {
     workingDays: string[],
     holidays: string[]
   }) => {
+    if (!startStr || !endStr) return 0;
     const start = parseISO(startStr);
     const end = parseISO(endStr);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
     if (start > end) return 0;
 
     const [sH, sM] = shiftConfig.shiftStart.split(':').map(Number);
@@ -137,7 +139,11 @@ export default function App() {
   };
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'workbook' | 'settings' | 'mapping-details' | 'user-onboard'>('analytics');
-  const [trendPeriod, setTrendPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('weekly');
+  const [trendPeriod, setTrendPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semi-annual' | 'three-quarter' | 'yearly' | 'custom'>('daily');
+  const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string }>({
+    start: format(subDays(new Date(), 7), "yyyy-MM-dd"),
+    end: format(new Date(), "yyyy-MM-dd")
+  });
   
   // User Onboard State
   const [users, setUsers] = useState<AppUser[]>([
@@ -419,6 +425,7 @@ export default function App() {
   const [selectedEmployee, setSelectedEmployee] = useState<string>('All');
   const [editingTask, setEditingTask] = useState<SupportTask | null>(null);
   const [auditTask, setAuditTask] = useState<SupportTask | null>(null);
+  const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
   
   // Dynamic Projects List
   const PROJECTS_LIST = useMemo(() => projectsDB.map(p => p.name), [projectsDB]);
@@ -529,7 +536,7 @@ export default function App() {
     priority: 'P3',
     status: 'Open',
     generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-    responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+    responseDate: '',
     closureDate: '',
     userIntimated: false,
     description: '',
@@ -608,15 +615,33 @@ export default function App() {
 
     // Filter tasks based on trendPeriod for Distribution charts
     const now = new Date();
-    const periodStart = trendPeriod === 'weekly' 
-      ? subDays(now, 7) 
-      : trendPeriod === 'monthly' 
-        ? subDays(now, 30) 
-        : subDays(now, 91); // approx 3 months
+    let periodStart: Date;
+    let periodEnd = now;
+
+    if (trendPeriod === 'custom') {
+      periodStart = parseISO(customDateRange.start);
+      periodEnd = parseISO(customDateRange.end);
+      // Ensure end of day for the end date
+      periodEnd.setHours(23, 59, 59, 999);
+    } else {
+      periodStart = trendPeriod === 'daily'
+        ? startOfDay(now)
+        : trendPeriod === 'weekly' 
+          ? subDays(now, 7) 
+          : trendPeriod === 'monthly' 
+            ? subDays(now, 30) 
+            : trendPeriod === 'quarterly'
+              ? subDays(now, 91)
+              : trendPeriod === 'semi-annual'
+                ? subDays(now, 182)
+                : trendPeriod === 'three-quarter'
+                  ? subDays(now, 273)
+                  : subDays(now, 365);
+    }
 
     const distributionTasks = currentTasks.filter(t => {
       const genDate = parseISO(t.generationDate);
-      return genDate >= periodStart;
+      return genDate >= periodStart && genDate <= periodEnd;
     });
 
     // Priority Pie
@@ -678,9 +703,28 @@ export default function App() {
     // Trend Line calculation based on trendPeriod
     let trendData: { name: string; closures: number; date: number }[] = [];
 
-    if (trendPeriod === 'weekly') {
-      trendData = Array.from({ length: 7 }).map((_, i) => {
-        const date = subDays(now, i);
+    if (trendPeriod === 'daily' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 1.1)) {
+      // Group by hours for daily or very short custom range
+      trendData = Array.from({ length: 24 }).map((_, i) => {
+        const date = new Date(periodStart);
+        date.setHours(i, 0, 0, 0);
+        const formatted = format(date, 'HH:mm');
+        const hourStart = date.getTime();
+        const hourEnd = hourStart + 3600000;
+
+        const closures = currentTasks.filter(t => {
+          if (!t.closureDate) return false;
+          const cTime = parseISO(t.closureDate).getTime();
+          return cTime >= hourStart && cTime < hourEnd;
+        }).length;
+
+        return { name: formatted, closures, date: hourStart };
+      });
+    } else if (trendPeriod === 'weekly' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 14)) {
+      // Group by day for weekly or short custom range
+      const daysCount = trendPeriod === 'custom' ? Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / 1440)) : 7;
+      trendData = Array.from({ length: daysCount }).map((_, i) => {
+        const date = subDays(periodEnd, i);
         const formatted = format(date, 'MMM dd');
         const dayStart = startOfDay(date).getTime();
         const dayEnd = dayStart + 86400000;
@@ -693,27 +737,13 @@ export default function App() {
 
         return { name: formatted, closures, date: dayStart };
       }).reverse();
-    } else if (trendPeriod === 'monthly') {
-      trendData = Array.from({ length: 30 }).map((_, i) => {
-        const date = subDays(now, i);
-        const formatted = format(date, 'MMM dd');
-        const dayStart = startOfDay(date).getTime();
-        const dayEnd = dayStart + 86400000;
-        
-        const closures = currentTasks.filter(t => {
-          if (!t.closureDate) return false;
-          const cTime = parseISO(t.closureDate).getTime();
-          return cTime >= dayStart && cTime < dayEnd;
-        }).length;
-
-        return { name: formatted, closures, date: dayStart };
-      }).reverse();
-    } else if (trendPeriod === 'quarterly') {
-      // Group by week for quarterly trend
-      trendData = Array.from({ length: 13 }).map((_, i) => {
-        const date = subDays(now, i * 7);
-        const formatted = `Wk ${13 - i}`;
-        const weekStart = startOfDay(date).getTime() - (6 * 86400000); // approx start of week
+    } else if (trendPeriod === 'monthly' || (trendPeriod === 'custom' && differenceInMinutes(periodEnd, periodStart) / 1440 <= 45)) {
+      // Group by week for monthly or mid-range custom
+      const weeksCount = trendPeriod === 'custom' ? Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / (1440 * 7))) : 4;
+      trendData = Array.from({ length: weeksCount }).map((_, i) => {
+        const date = subDays(periodEnd, i * 7);
+        const formatted = `Wk ${format(date, 'w')}`;
+        const weekStart = startOfDay(date).getTime() - (6 * 86400000); 
         const weekEnd = startOfDay(date).getTime() + 86400000;
         
         const closures = currentTasks.filter(t => {
@@ -723,6 +753,28 @@ export default function App() {
         }).length;
 
         return { name: formatted, closures, date: weekStart };
+      }).reverse();
+    } else {
+      // Group by month for long ranges
+      let monthsCount = 12;
+      if (trendPeriod === 'quarterly') monthsCount = 3;
+      else if (trendPeriod === 'semi-annual') monthsCount = 6;
+      else if (trendPeriod === 'three-quarter') monthsCount = 9;
+      else if (trendPeriod === 'custom') monthsCount = Math.max(1, Math.ceil(differenceInMinutes(periodEnd, periodStart) / (1440 * 30)));
+
+      trendData = Array.from({ length: monthsCount }).map((_, i) => {
+        const date = subDays(periodEnd, i * 30);
+        const formatted = format(date, 'MMM yy');
+        const monthStart = startOfDay(date).getTime() - (29 * 86400000);
+        const monthEnd = startOfDay(date).getTime() + 86400000;
+        
+        const closures = currentTasks.filter(t => {
+          if (!t.closureDate) return false;
+          const cTime = parseISO(t.closureDate).getTime();
+          return cTime >= monthStart && cTime < monthEnd;
+        }).length;
+
+        return { name: formatted, closures, date: monthStart };
       }).reverse();
     }
 
@@ -928,7 +980,7 @@ export default function App() {
       priority: 'P3',
       status: 'Open',
       generationDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-      responseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+      responseDate: '',
       closureDate: '',
       userIntimated: false,
       description: '',
@@ -960,7 +1012,8 @@ export default function App() {
     setIsSidebarOpen(true);
   };
 
-  const handleExport = () => {
+  const handleExport = (formatType: 'excel' | 'pdf') => {
+    setIsExportDropdownOpen(false);
     const currentTasks = projectFilteredTasks;
     
     // 1. Data Sheet (Tickets)
@@ -986,24 +1039,18 @@ export default function App() {
         'Status': t.status,
         'Assignee': t.assignedTo,
         'Gen Date': format(parseISO(t.generationDate), 'yyyy-MM-dd HH:mm'),
-        'Resp Date': format(parseISO(t.responseDate), 'yyyy-MM-dd HH:mm'),
+        'Resp Date': t.responseDate ? format(parseISO(t.responseDate), 'yyyy-MM-dd HH:mm') : '-',
         'Close Date': t.closureDate ? format(parseISO(t.closureDate), 'yyyy-MM-dd HH:mm') : '-',
-        'Response SLA Limit (Hrs)': slaThresholds.response,
         'Response SLA Status': responseSlaStatus,
-        'Resolution SLA Limit (Hrs)': slaThresholds.resolution,
-        'Resolution Time (Min)': resolutionTime ?? '-',
-        'Resolution SLA Status': resolutionSlaStatus,
+        'Resolution Status': resolutionSlaStatus,
         'Aging (H:M)': `${Math.floor(Math.max(0, agingMin) / 60)}:${(Math.max(0, agingMin) % 60).toString().padStart(2, '0')}`,
-        'Delay (Min)': (resolutionTime !== null && resolutionTime > slaLimit) ? resolutionTime - slaLimit : 0,
         'Description': t.description,
-        'Resolution': t.solution,
-        'Remarks': t.remarks
       };
     });
 
     // 2. Analytics Sheet (KPIs)
     const closedTasks = currentTasks.filter(t => t.closureDate);
-    const metCount = ticketData.filter(t => t['Resolution SLA Status'] === 'MET').length;
+    const metCount = ticketData.filter(t => t['Resolution Status'] === 'MET').length;
     const slaRate = closedTasks.length > 0 ? (metCount / closedTasks.length) * 100 : 0;
 
     const analyticsData = [
@@ -1013,23 +1060,24 @@ export default function App() {
       { Metric: 'Notification Compliance', Value: `${kpis.compliance}%` },
       { Metric: 'Mean Time to Respond (MTTR)', Value: formatDuration(kpis.mttrResp * 60000) },
       { Metric: 'Mean Time to Resolve (MTTR-R)', Value: formatDuration(kpis.mttrReso * 60000) },
-      { Metric: '', Value: '' },
-      { Metric: 'Volume by Priority', Value: '' },
       ...Object.keys(PRIORITY_COLORS).map(p => ({
         Metric: `  Priority ${p}`,
         Value: currentTasks.filter(t => t.priority === p).length
-      })),
-      { Metric: 'Volume by Support Tier', Value: '' },
-      ...['L1', 'L2', 'L3', 'L4'].map(l => ({
-        Metric: `  Tier ${l}`,
-        Value: currentTasks.filter(t => t.supportLevel === l).length
       }))
     ];
 
-    exportToExcel([
+    const sheets = [
       { name: 'SLA_Analytics', data: analyticsData },
       { name: 'Ticket_Inventory', data: ticketData }
-    ], `IT_Support_Service_Report_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`);
+    ];
+
+    const filenamePrefix = `IT_Support_Service_Report_${format(new Date(), 'yyyyMMdd_HHmm')}`;
+    
+    if (formatType === 'excel') {
+      exportToExcel(sheets, `${filenamePrefix}.xlsx`);
+    } else {
+      exportToPDF(sheets, `${filenamePrefix}.pdf`);
+    }
   };
 
   const filteredTasks = projectFilteredTasks.filter(t => 
@@ -1386,13 +1434,49 @@ export default function App() {
               </button>
             </div>
             
-            <button 
-              onClick={handleExport}
-              className="btn-secondary flex items-center gap-2 group whitespace-nowrap"
-            >
-              <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
-              <span className="hidden sm:inline">Export Excel</span>
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setIsExportDropdownOpen(!isExportDropdownOpen)}
+                className="btn-secondary flex items-center gap-2 group whitespace-nowrap"
+              >
+                <Download className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
+                <span className="hidden sm:inline">Export Report</span>
+                <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200", isExportDropdownOpen && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {isExportDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsExportDropdownOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl z-50 overflow-hidden"
+                    >
+                      <button
+                        onClick={() => handleExport('excel')}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors text-xs font-bold"
+                      >
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                        Export to Excel
+                      </button>
+                      <div className="h-[1px] bg-slate-800/50 mx-2" />
+                      <button
+                        onClick={() => handleExport('pdf')}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors text-xs font-bold"
+                      >
+                        <FileText className="w-4 h-4 text-blue-500" />
+                        Export to PDF
+                      </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
@@ -1410,25 +1494,74 @@ export default function App() {
                 exit={{ opacity: 0, y: -20 }}
                 className="grid grid-cols-1 lg:grid-cols-2 gap-4"
               >
+                <div className="lg:col-span-2 flex flex-col md:flex-row items-center justify-between gap-6 bg-slate-900/40 p-6 rounded-3xl border border-slate-800/50 mb-2">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3.5 bg-blue-500/10 rounded-2xl">
+                      <Clock className="w-6 h-6 text-blue-500" />
+                    </div>
+                    <div>
+                      <h3 className="text-white font-black text-sm uppercase tracking-widest leading-none">Timeframe Intelligence</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-2">Dynamic window filters for all metrics</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
+                    {trendPeriod === 'custom' && (
+                      <motion.div 
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-center gap-3 bg-slate-950/50 p-2 rounded-2xl border border-slate-800"
+                      >
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-500 uppercase px-2">From</p>
+                          <input 
+                            type="date" 
+                            value={customDateRange.start}
+                            onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
+                            className="bg-transparent text-white text-[10px] font-mono font-bold px-2 focus:outline-none"
+                          />
+                        </div>
+                        <div className="h-6 w-[1px] bg-slate-800 self-end mb-1" />
+                        <div className="space-y-1">
+                          <p className="text-[8px] font-black text-slate-500 uppercase px-2">To</p>
+                          <input 
+                            type="date" 
+                            value={customDateRange.end}
+                            onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
+                            className="bg-transparent text-white text-[10px] font-mono font-bold px-2 focus:outline-none"
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+
+                    <div className="relative group min-w-[180px]">
+                      <select
+                        value={trendPeriod}
+                        onChange={(e) => setTrendPeriod(e.target.value as any)}
+                        className="appearance-none w-full bg-slate-800 border border-slate-700 text-white text-[10px] font-black uppercase tracking-widest pl-10 pr-10 py-3.5 rounded-xl cursor-pointer hover:bg-slate-750 hover:border-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="semi-annual">Semi-Annual</option>
+                        <option value="three-quarter">Three-Quarter</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="custom">Custom Range</option>
+                      </select>
+                      <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                         <Calendar className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                         <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="chart-container p-6 h-[400px]">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="label-sm mb-0">Ticket Trends</h3>
-                    <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                      {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                        <button
-                          key={period}
-                          onClick={() => setTrendPeriod(period)}
-                          className={cn(
-                            "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                            trendPeriod === period 
-                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                              : "text-slate-500 hover:text-slate-300"
-                          )}
-                        >
-                          {period}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <ResponsiveContainer width="100%" height="85%">
                     <LineChart data={charts.trendData}>
@@ -1448,22 +1581,6 @@ export default function App() {
                   <div className="chart-container p-5 h-[400px] flex flex-col">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="label-sm mb-0">Priority Distribution</h3>
-                      <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                        {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                          <button
-                            key={period}
-                            onClick={() => setTrendPeriod(period)}
-                            className={cn(
-                              "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                              trendPeriod === period 
-                                ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                                : "text-slate-500 hover:text-slate-300"
-                            )}
-                          >
-                            {period.slice(0, 1)}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                     <div className="flex flex-grow items-center justify-around">
                       <div className="w-32 h-32 relative">
@@ -1504,22 +1621,6 @@ export default function App() {
                 <div className="chart-container p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="label-sm mb-0">Workload Distribution (L1-L4)</h3>
-                    <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                      {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                        <button
-                          key={period}
-                          onClick={() => setTrendPeriod(period)}
-                          className={cn(
-                            "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                            trendPeriod === period 
-                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                              : "text-slate-500 hover:text-slate-300"
-                          )}
-                        >
-                          {period}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <div className="space-y-4">
                     {charts.levelData.map(level => {
@@ -1545,22 +1646,6 @@ export default function App() {
                 <div className="chart-container p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="label-sm mb-0">Consumed Hours by Tier</h3>
-                    <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                      {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                        <button
-                          key={period}
-                          onClick={() => setTrendPeriod(period)}
-                          className={cn(
-                            "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                            trendPeriod === period 
-                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                              : "text-slate-500 hover:text-slate-300"
-                          )}
-                        >
-                          {period}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1593,22 +1678,6 @@ export default function App() {
                 <div className="chart-container p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="label-sm mb-0">Top 5 Issues</h3>
-                    <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                      {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                        <button
-                          key={period}
-                          onClick={() => setTrendPeriod(period)}
-                          className={cn(
-                            "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                            trendPeriod === period 
-                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                              : "text-slate-500 hover:text-slate-300"
-                          )}
-                        >
-                          {period}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <div className="space-y-4">
                     {charts.topIssues.map((issue, idx) => (
@@ -1632,22 +1701,6 @@ export default function App() {
                 <div className="chart-container p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="label-sm mb-0">Aging of Open Tickets</h3>
-                    <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1 border border-slate-700">
-                      {(['weekly', 'monthly', 'quarterly'] as const).map((period) => (
-                        <button
-                          key={period}
-                          onClick={() => setTrendPeriod(period)}
-                          className={cn(
-                            "px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest transition-all",
-                            trendPeriod === period 
-                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
-                              : "text-slate-500 hover:text-slate-300"
-                          )}
-                        >
-                          {period}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -2724,16 +2777,13 @@ export default function App() {
                         </div>
                         <div>
                           <label className="label-sm block mb-1.5">Designated Role</label>
-                          <select 
+                          <input 
+                            type="text" 
                             className="input-field w-full"
-                            value={userFormData.role || 'Standard User'}
+                            placeholder="e.g. System Administrator"
+                            value={userFormData.role || ''}
                             onChange={e => setUserFormData({...userFormData, role: e.target.value})}
-                          >
-                            <option value="Administrator">Administrator</option>
-                            <option value="Support Specialist">Support Specialist</option>
-                            <option value="L2 Engineer">L2 Engineer</option>
-                            <option value="Standard User">Standard User</option>
-                          </select>
+                          />
                         </div>
                         <div>
                           <label className="label-sm block mb-1.5">Access Status</label>
@@ -2954,7 +3004,126 @@ export default function App() {
                        </div>
                     </div>
 
-                    {/* Timeline Section */}
+                    {/* timeline start */}
+                    <div className="space-y-4">
+                       <div className="flex items-center gap-2">
+                          <Scale className="w-4 h-4 text-emerald-500" />
+                          <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">SLA Milestone Timeline</h4>
+                       </div>
+                       <div className="bg-slate-950/20 p-6 rounded-2xl border border-slate-800/50">
+                          <div className="relative pt-8 pb-4 px-4">
+                             {/* The actual line */}
+                             <div className="absolute top-[4.25rem] left-8 right-8 h-1 bg-slate-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-500 w-1/2"></div>
+                             </div>
+
+                             <div className="flex justify-between relative">
+                                {/* Creation */}
+                                <div className="flex flex-col items-center gap-3 relative z-10">
+                                   <div className="w-10 h-10 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center shadow-lg">
+                                      <Plus className="w-4 h-4 text-slate-400" />
+                                   </div>
+                                   <div className="text-center">
+                                      <p className="text-[9px] font-black text-white uppercase">Created</p>
+                                      <p className="text-[8px] font-mono text-slate-500 mt-1">{format(parseISO(auditTask.generationDate), 'HH:mm')}</p>
+                                   </div>
+                                </div>
+
+                                {/* Response */}
+                                <div className="flex flex-col items-center gap-3 relative z-10">
+                                   <div className={cn(
+                                      "w-10 h-10 rounded-2xl border flex items-center justify-center shadow-lg",
+                                      auditTask.responseDate
+                                        ? (getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].response || 0) * 60
+                                          ? "bg-emerald-500/10 border-emerald-500/30"
+                                          : "bg-red-500/10 border-red-500/30")
+                                        : "bg-slate-900 border-slate-800"
+                                   )}>
+                                      <Activity className={cn(
+                                         "w-4 h-4",
+                                         auditTask.responseDate
+                                           ? (getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].response || 0) * 60
+                                             ? "text-emerald-500"
+                                             : "text-red-500")
+                                           : "text-slate-700"
+                                      )} />
+                                   </div>
+                                   <div className="text-center">
+                                      <p className="text-[9px] font-black text-white uppercase">Responded</p>
+                                      <p className="text-[8px] font-mono text-slate-500 mt-1">
+                                         {auditTask.responseDate 
+                                           ? `+${Math.round(getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)))}m`
+                                           : '---'}
+                                      </p>
+                                   </div>
+                                </div>
+
+                                {/* Resolution */}
+                                <div className="flex flex-col items-center gap-3 relative z-10">
+                                   <div className={cn(
+                                      "w-10 h-10 rounded-2xl border flex items-center justify-center shadow-lg",
+                                      auditTask.closureDate 
+                                        ? (getBusinessMinutes(auditTask.generationDate, auditTask.closureDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].resolution || 0) * 60
+                                          ? "bg-indigo-500/10 border-indigo-500/30"
+                                          : "bg-orange-500/10 border-orange-500/30")
+                                        : "bg-slate-900 border-slate-800"
+                                   )}>
+                                      <CheckCircle2 className={cn(
+                                         "w-4 h-4",
+                                         auditTask.closureDate 
+                                           ? (getBusinessMinutes(auditTask.generationDate, auditTask.closureDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].resolution || 0) * 60
+                                             ? "text-indigo-400"
+                                             : "text-orange-400")
+                                           : "text-slate-700"
+                                      )} />
+                                   </div>
+                                   <div className="text-center">
+                                      <p className="text-[9px] font-black text-white uppercase">Resolved</p>
+                                      <p className="text-[8px] font-mono text-slate-500 mt-1">
+                                         {auditTask.closureDate 
+                                           ? `+${Math.round(getBusinessMinutes(auditTask.generationDate, auditTask.closureDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)))}m`
+                                           : 'Pending'}
+                                      </p>
+                                   </div>
+                                </div>
+                             </div>
+                          </div>
+                          
+                          <div className="mt-8 grid grid-cols-3 gap-4 border-t border-slate-800/50 pt-4">
+                             <div className="text-center">
+                                <p className="text-[7px] font-black text-slate-600 uppercase tracking-widest">Inception</p>
+                                <p className="text-[10px] font-bold text-slate-400 mt-1 italic">Ticket Logged</p>
+                             </div>
+                             <div className="text-center">
+                                <p className="text-[7px] font-black text-slate-600 uppercase tracking-widest">SLA Met</p>
+                                <p className={cn(
+                                   "text-[10px] font-bold mt-1",
+                                   auditTask.responseDate
+                                     ? (getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].response || 0) * 60
+                                       ? "text-emerald-500"
+                                       : "text-red-500")
+                                     : "text-slate-500"
+                                )}>
+                                   {auditTask.responseDate
+                                     ? (getBusinessMinutes(auditTask.generationDate, auditTask.responseDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].response || 0) * 60
+                                       ? 'Response Valid'
+                                       : 'Response Breach')
+                                     : 'Awaiting Res.'}
+                                </p>
+                             </div>
+                             <div className="text-center">
+                                <p className="text-[7px] font-black text-slate-600 uppercase tracking-widest">Target Resolution</p>
+                                <p className="text-[10px] font-bold text-slate-400 mt-1">
+                                   {auditTask.closureDate 
+                                     ? (getBusinessMinutes(auditTask.generationDate, auditTask.closureDate, getEffectiveShift(auditTask.projectId, auditTask.assignedTo)) <= (projectConfigs.find(c => c.projectId === auditTask.projectId)?.slas[auditTask.priority].resolution || 0) * 60
+                                        ? 'Solved in Time'
+                                        : 'Out of Time')
+                                     : 'In Progress'}
+                                </p>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
                     <div className="space-y-4">
                        <div className="flex items-center gap-2">
                           <History className="w-4 h-4 text-slate-500" />

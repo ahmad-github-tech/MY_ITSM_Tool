@@ -1,6 +1,9 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { format } from 'date-fns';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -26,6 +29,60 @@ export function exportToExcel(sheets: { name: string; data: any[] }[], filename:
   });
 
   XLSX.writeFile(wb, filename);
+}
+
+export function exportToPDF(sheets: { name: string; data: any[] }[], filename: string) {
+  const doc = new jsPDF('landscape');
+  const now = format(new Date(), 'MMM dd, yyyy HH:mm');
+  
+  sheets.forEach((sheet, index) => {
+    if (index > 0) doc.addPage();
+    
+    // Header
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text('IT Support Service Insights', 14, 15);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.text(`Sheet: ${sheet.name}`, 14, 22);
+    doc.text(`Generated: ${now}`, 283, 22, { align: 'right' });
+    
+    if (sheet.data.length > 0) {
+      const headers = Object.keys(sheet.data[0]);
+      const rows = sheet.data.map(row => headers.map(header => row[header] ?? ''));
+      
+      autoTable(doc, {
+        head: [headers],
+        body: rows,
+        startY: 28,
+        styles: { fontSize: 7, cellPadding: 1.5, font: 'helvetica' },
+        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 250, 252] }, // slate-50
+        margin: { top: 30 },
+        didParseCell: (data) => {
+          if (data.cell.text[0] === 'MET') {
+            data.cell.styles.textColor = [16, 185, 129]; // emerald-500
+            data.cell.styles.fontStyle = 'bold';
+          } else if (data.cell.text[0] === 'NOT MET' || data.cell.text[0] === 'BREACHED') {
+            data.cell.styles.textColor = [239, 68, 68]; // red-500
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+      });
+    } else {
+      doc.setFontSize(10);
+      doc.text('No data points found for this report segment.', 14, 30);
+    }
+
+    // Footer
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // slate-400
+    doc.text(`System Generated Report | Page ${index + 1} of ${pageCount}`, 14, 203);
+  });
+
+  doc.save(filename.replace(/\.[^/.]+$/, "") + ".pdf");
 }
 
 export function downloadCSV(data: any[], filename: string) {
